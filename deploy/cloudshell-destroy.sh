@@ -2,6 +2,8 @@
 # Tear the stack down from AWS CloudShell. See docs/teardown.md.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# AWS_REGION wins over AWS_DEFAULT_REGION. Set both so teardown hits the Sydney stack.
+export AWS_REGION=ap-southeast-2
 export AWS_DEFAULT_REGION=ap-southeast-2
 STACK="${STACK_NAME:-builders-live}"
 
