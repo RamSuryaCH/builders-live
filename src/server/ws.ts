@@ -1,15 +1,26 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Noncommercial-1.0.0
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
-import { apply, createRoom, type ApplyResult, type Command, type EngineEnv } from "../shared/engine.js";
+import { createRoom, type ApplyResult, type Command, type EngineEnv } from "../shared/engine.js";
 import { loadConfig } from "../shared/event-config.js";
 import { loadQuestions } from "../shared/questions.js";
-import type { ClientMessage, ServerMessage } from "../shared/protocol.js";
+import type { ClientMessage } from "../shared/protocol.js";
 import { roomCodeOk } from "../shared/protocol.js";
 import { issueToken, readToken, verifySecret } from "../shared/tokens.js";
 import type { Features, RoomState } from "../shared/types.js";
 import { adminView, battleView, boardView, cursorsView, groupsView, lobbyView, playerView, qaView, screenView, standingsView, topQuestions } from "../shared/views.js";
-import { broadcastLock, commitRoom, createRoomItem, deleteConnection, listConnections, loadRoom, loginAllowed, loginFail, loginSuccess, putConnection } from "./aws-store.js";
+import {
+  broadcastLock,
+  createRoomItem,
+  deleteConnection,
+  getStore,
+  listConnections,
+  loadRoom,
+  loginAllowed,
+  loginFail,
+  loginSuccess,
+  putConnection,
+} from "./aws-store.js";
 import { post, postMany, roomFanout } from "./fanout.js";
 import { loadSecrets } from "./secrets.js";
 
@@ -19,6 +30,7 @@ const features: Features = { bedrockSummary: process.env.ENABLE_BEDROCK_SUMMARY 
 const sqs = new SQSClient({});
 const lambda = new LambdaClient({});
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const store = getStore();
 
 interface GwEvent {
   requestContext: { routeKey?: string; connectionId: string; identity?: { sourceIp?: string }; domainName?: string; stage?: string };
@@ -48,9 +60,12 @@ export async function handler(event: GwEvent | { action?: string; roomCode?: str
   try {
     await onMessage(connectionId, gw.requestContext.identity?.sourceIp ?? "unknown", msg);
   } catch (err) {
-    console.error(JSON.stringify({ type: msg.type, failed: true }));
-    await post(connectionId, { type: "error", code: "server", message: "Something went wrong. Try again.", serverTs: Date.now() });
-    void err;
+    console.error("ws handler failed", { type: msg.type, err });
+    try {
+      await post(connectionId, { type: "error", code: "server", message: "Something went wrong. Try again.", serverTs: Date.now() });
+    } catch (postErr) {
+      console.error("failed to send server error", postErr);
+    }
   }
   return { statusCode: 200 };
 }
@@ -95,10 +110,23 @@ async function onMessage(connectionId: string, ip: string, msg: ClientMessage): 
     if (!(await hostOk(connectionId, msg.token, secrets.signing, now))) return;
     const code = newCode();
     const state = createRoom(code, now);
-    await createRoomItem(state);
+    await createRoomItem(state, config);
     await putConnection(code, connectionId, { role: "host" });
     await post(connectionId, { type: "room.created", roomCode: code, joinPath: `/join/${code}`, screenPath: `/screen/${code}`, serverTs: now });
     await post(connectionId, { type: "state", role: "host", state: adminView(state, env, now, features), serverTs: now });
+    return;
+  }
+  if (msg.type === "subscribe") {
+    const views = Array.isArray(msg.views) ? msg.views.map(String) : [];
+    await store.updateConnectionViews(connectionId, views);
+    const code = await findConn(connectionId);
+    const pid = await playerId(connectionId);
+    if (code && pid) {
+      const room = await loadRoom(code);
+      if (room?.players[pid] && !room.players[pid].kicked) {
+        await post(connectionId, { type: "state", role: "player", state: playerView(room, env, pid, now, features), serverTs: now });
+      }
+    }
     return;
   }
   const roomCode = await roomFor(connectionId, msg);
@@ -135,7 +163,7 @@ async function onMessage(connectionId: string, ip: string, msg: ClientMessage): 
       await putConnection(roomCode, connectionId, { role: "host" });
       await post(connectionId, { type: "state", role: "host", state: view, serverTs: now });
     } else {
-      await post(connectionId, { type: "admin", admin: view, serverTs: now });
+      await post(connectionId, { type: "admin", admin: view, serverTs: now, clientTs: msg.clientTs });
     }
     return;
   }
@@ -162,11 +190,8 @@ async function roomFor(connectionId: string, msg: ClientMessage): Promise<string
 }
 
 async function findConn(connectionId: string): Promise<string | null> {
-  const { DynamoDBClient } = await import("@aws-sdk/client-dynamodb");
-  const { DynamoDBDocumentClient, GetCommand } = await import("@aws-sdk/lib-dynamodb");
-  const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}));
-  const got = await doc.send(new GetCommand({ TableName: process.env.TABLE_NAME, Key: { pk: `CONN#${connectionId}`, sk: "META" } }));
-  return (got.Item?.roomCode as string | undefined) ?? null;
+  const got = await store.getConnection(connectionId);
+  return (got?.roomCode as string | undefined) ?? null;
 }
 
 async function hostOk(connectionId: string, token: string | undefined, signing: string, now: number): Promise<boolean> {
@@ -192,12 +217,6 @@ async function commandFor(connectionId: string, msg: ClientMessage, signing: str
       await putConnection(payload.room, connectionId, { role: "player", playerId: payload.pid, deviceId: msg.deviceId });
       return { type: "resume", playerId: payload.pid, deviceId: msg.deviceId };
     }
-    case "screen.join":
-      await putConnection(msg.roomCode.toUpperCase(), connectionId, { role: "screen" });
-      return null;
-    case "host.attach":
-      await putConnection(msg.roomCode.toUpperCase(), connectionId, { role: "host" });
-      return null;
     case "answer":
       return { type: "answer", playerId: await playerId(connectionId), questionId: msg.questionId, choiceId: msg.choiceId, clientMsgId: msg.clientMsgId };
     case "board.place":
@@ -246,45 +265,39 @@ async function commandFor(connectionId: string, msg: ClientMessage, signing: str
       return { type: "host.qa.answered", questionId: msg.questionId, answered: msg.answered };
     case "host.qa.hide":
       return { type: "host.qa.hide", questionId: msg.questionId, hidden: msg.hidden };
-    case "host.snapshot":
-      return null;
     default:
       return null;
   }
 }
 
 async function playerId(connectionId: string): Promise<string> {
-  const { DynamoDBClient } = await import("@aws-sdk/client-dynamodb");
-  const { DynamoDBDocumentClient, GetCommand } = await import("@aws-sdk/lib-dynamodb");
-  const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}));
-  const got = await doc.send(new GetCommand({ TableName: process.env.TABLE_NAME, Key: { pk: `CONN#${connectionId}`, sk: "META" } }));
-  return String(got.Item?.playerId ?? "");
+  const got = await store.getConnection(connectionId);
+  return String(got?.playerId ?? "");
 }
 
 async function mutate(roomCode: string, command: Command, connectionId: string, clientTs?: number): Promise<void> {
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    const current = await loadRoom(roomCode);
-    if (!current) return;
-    const working = structuredClone(current);
-    const result = apply(working, command, Date.now(), env);
-    if (!result.ok) {
-      if (result.error) await post(connectionId, { type: "error", ...result.error, serverTs: Date.now() });
-      return;
-    }
-    const changed = result.phaseChanged || result.modeChanged || result.dirty.length > 0 || result.joined || result.answer || result.clientMsgId || result.kicked;
-    if (!changed) return;
-    const saved = await commitRoom(current, working, touchedPlayers(current, working));
-    if (!saved) continue;
-    await deliver(roomCode, working, result, connectionId, clientTs);
-    if (result.scheduleAt) await schedule(roomCode, working.battle.generation, result.scheduleAt);
-    if (result.dirty.some((k) => k === "board" || k === "cursors" || k === "standings")) await maybeFlush(roomCode, result);
+  const result = await store.applyCommand(roomCode, command, Date.now(), env);
+  if (!result.ok) {
+    if (result.error) await post(connectionId, { type: "error", ...result.error, serverTs: Date.now() });
     return;
   }
-}
-
-function touchedPlayers(prev: RoomState, next: RoomState): string[] {
-  const ids = new Set([...Object.keys(prev.players), ...Object.keys(next.players)]);
-  return [...ids].filter((id) => JSON.stringify(prev.players[id]) !== JSON.stringify(next.players[id]));
+  const changed = result.phaseChanged || result.modeChanged || result.dirty.length > 0 || result.joined || result.answer || result.clientMsgId || result.kicked;
+  if (!changed) return;
+  const state = await loadRoom(roomCode);
+  if (!state) {
+    await post(connectionId, { type: "error", code: "room_not_found", message: "That room has ended.", serverTs: Date.now() });
+    return;
+  }
+  await deliver(roomCode, state, result, connectionId, clientTs);
+  // Fan-out / schedule after a successful deliver must not surface as a client error.
+  try {
+    if (result.scheduleAt) await schedule(roomCode, state.battle.generation, result.scheduleAt);
+    if (result.dirty.some((k) => k === "board" || k === "cursors" || k === "standings" || k === "lobby" || k === "qa" || k === "admin" || k === "match")) {
+      await maybeFlush(roomCode);
+    }
+  } catch (err) {
+    console.error("post-success fanout failed", { roomCode, command: command.type, err });
+  }
 }
 
 async function deliver(roomCode: string, state: RoomState, result: ApplyResult, connectionId: string, clientTs?: number): Promise<void> {
@@ -320,7 +333,7 @@ async function deliver(roomCode: string, state: RoomState, result: ApplyResult, 
   }
 }
 
-async function maybeFlush(roomCode: string, result: ApplyResult): Promise<void> {
+async function maybeFlush(roomCode: string): Promise<void> {
   const gap = Math.round(1000 / config.board.broadcastHz);
   const got = await broadcastLock(roomCode, "fanout", gap);
   if (!got) {
@@ -332,10 +345,9 @@ async function maybeFlush(roomCode: string, result: ApplyResult): Promise<void> 
     return;
   }
   await flush(roomCode);
-  void result;
 }
 
-async function flush(roomCode: string): Promise<void> {
+export async function flush(roomCode: string): Promise<void> {
   const state = await loadRoom(roomCode);
   if (!state) return;
   const now = Date.now();

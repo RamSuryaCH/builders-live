@@ -89,7 +89,14 @@ fi
 SITE="https://${DOMAIN}"
 
 PUBLIC_BASE_URL="$SITE" VITE_WS_URL="$WS" npm run build:web
-aws s3 sync frontend/dist "s3://${BUCKET}" --delete --region ap-southeast-2
+# Hashed bundles can be cached forever. HTML and SPA entry points must revalidate.
+aws s3 sync frontend/dist "s3://${BUCKET}" --delete \
+  --exclude "assets/*" \
+  --cache-control "no-cache" \
+  --region ap-southeast-2
+aws s3 sync frontend/dist/assets "s3://${BUCKET}/assets" \
+  --cache-control "public, max-age=31536000, immutable" \
+  --region ap-southeast-2
 aws cloudfront create-invalidation --distribution-id "$DIST" --paths "/*" >/dev/null
 
 echo

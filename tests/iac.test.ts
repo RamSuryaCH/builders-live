@@ -15,6 +15,9 @@ test("the SAM template stays serverless, cheap, and in Sydney", async () => {
   assert.match(yaml, /EnableBedrockSummary:\n\s+Type: String\n\s+Default: "false"/);
   assert.match(yaml, /amazon\.nova-lite-v1:0/);
   assert.match(yaml, /ReservedConcurrentExecutions: 1/);
+  assert.match(yaml, /MemorySize: 512/);
+  assert.match(yaml, /Timeout: 15/);
+  assert.doesNotMatch(yaml, /ProvisionedConcurrency/);
   assert.doesNotMatch(yaml, /AWS::EC2::NatGateway/);
   assert.doesNotMatch(yaml, /ProvisionedThroughput/);
   assert.doesNotMatch(yaml, /AWS::SecretsManager/);
@@ -22,4 +25,6 @@ test("the SAM template stays serverless, cheap, and in Sydney", async () => {
   assert.match(yaml, /ResourceTags:\n\s+- Key: project\n\s+Value: builders-live/);
   assert.match(deploy, /mktemp --suffix=\.toml/);
   assert.match(deploy, /--tags project=builders-live/);
+  assert.match(deploy, /max-age=31536000, immutable/);
+  assert.match(deploy, /cache-control "no-cache"/);
 });

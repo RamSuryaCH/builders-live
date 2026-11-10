@@ -5,7 +5,7 @@ import { existsSync, createReadStream, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { WebSocketServer, type WebSocket } from "ws";
-import { apply, createRoom, type ApplyResult, type Command, type EngineEnv } from "../shared/engine.js";
+import { createRoom, type ApplyResult, type Command, type EngineEnv } from "../shared/engine.js";
 import { loadConfig, validateConfig } from "../shared/event-config.js";
 import { loadQuestions, validateQuestions } from "../shared/questions.js";
 import type { ClientMessage, ServerMessage } from "../shared/protocol.js";
@@ -25,6 +25,8 @@ import {
   screenView,
   standingsView,
 } from "../shared/views.js";
+import { MemoryBackend } from "./memory-backend.js";
+import { RoomStore } from "./room-store.js";
 
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -39,6 +41,7 @@ interface Meta {
 }
 
 interface Runtime {
+  code: string;
   state: RoomState;
   conns: Set<WebSocket>;
   timer?: NodeJS.Timeout;
@@ -77,6 +80,15 @@ function mime(file: string): string {
   return "application/octet-stream";
 }
 
+function cacheControl(file: string): string | undefined {
+  const base = path.basename(file);
+  if (file.includes(`${path.sep}assets${path.sep}`) || /-[A-Za-z0-9_-]{8,}\.(js|css)$/.test(base)) {
+    return "public, max-age=31536000, immutable";
+  }
+  if (base === "index.html" || base.endsWith(".html")) return "no-cache";
+  return undefined;
+}
+
 export async function startLocalServer(opts: LocalOptions = {}): Promise<RunningServer> {
   const config = loadConfig();
   const questions = loadQuestions();
@@ -93,6 +105,7 @@ export async function startLocalServer(opts: LocalOptions = {}): Promise<Running
     config.login.windowSeconds * 1000,
     config.login.lockoutSeconds * 1000,
   );
+  const store = new RoomStore(new MemoryBackend());
   const rooms = new Map<string, Runtime>();
 
   const metaOf = (ws: WebSocket): Meta => (ws as WebSocket & { meta: Meta }).meta;
@@ -135,6 +148,11 @@ export async function startLocalServer(opts: LocalOptions = {}): Promise<Running
 
   let arm: (room: Runtime, at: number | null | undefined) => void;
 
+  async function refresh(room: Runtime): Promise<void> {
+    const next = await store.loadRoom(room.code);
+    if (next) room.state = next;
+  }
+
   function applySideEffects(room: Runtime, result: ApplyResult, actor: WebSocket | null, clientTs?: number): void {
     const now = Date.now();
     if (!result.ok && result.error && actor) {
@@ -168,6 +186,13 @@ export async function startLocalServer(opts: LocalOptions = {}): Promise<Running
     if (result.scheduleAt !== undefined) arm(room, result.scheduleAt);
   }
 
+  async function mutate(room: Runtime, cmd: Command, actor: WebSocket | null, clientTs?: number): Promise<ApplyResult> {
+    const result = await store.applyCommand(room.code, cmd, Date.now(), env);
+    if (result.ok) await refresh(room);
+    applySideEffects(room, result, actor, clientTs);
+    return result;
+  }
+
   arm = (room, at) => {
     if (at === undefined) return;
     if (room.timer) clearTimeout(room.timer);
@@ -176,9 +201,11 @@ export async function startLocalServer(opts: LocalOptions = {}): Promise<Running
     const generation = room.state.battle.generation;
     const wait = Math.max(0, at - Date.now());
     room.timer = setTimeout(() => {
-      if (room.state.battle.generation !== generation) return;
-      const result = apply(room.state, { type: "tick" }, Date.now(), env);
-      applySideEffects(room, result, null);
+      void (async () => {
+        await refresh(room);
+        if (room.state.battle.generation !== generation) return;
+        await mutate(room, { type: "tick" }, null);
+      })();
     }, wait);
   };
 
@@ -257,8 +284,7 @@ export async function startLocalServer(opts: LocalOptions = {}): Promise<Running
     if (playerLeft && role === "player" && playerId) {
       const still = [...room.conns].some((other) => metaOf(other).playerId === playerId && metaOf(other).role === "player");
       if (!still) {
-        const result = apply(room.state, { type: "disconnect", playerId }, Date.now(), env);
-        applySideEffects(room, result, null);
+        void mutate(room, { type: "disconnect", playerId }, null);
       }
     }
   }
@@ -336,6 +362,13 @@ export async function startLocalServer(opts: LocalOptions = {}): Promise<Running
       send(ws, { type: "error", code: "bad_message", message: "Missing message type.", serverTs: Date.now() });
       return;
     }
+    void handleMessage(ws, msg).catch((err) => {
+      console.error("local handler failed", { type: msg.type, err });
+      send(ws, { type: "error", code: "server", message: "Something went wrong. Try again.", serverTs: Date.now() });
+    });
+  }
+
+  async function handleMessage(ws: WebSocket, msg: ClientMessage): Promise<void> {
     const now = Date.now();
     const meta = metaOf(ws);
     const clientTs = "clientTs" in msg ? msg.clientTs : undefined;
@@ -343,8 +376,8 @@ export async function startLocalServer(opts: LocalOptions = {}): Promise<Running
     if (msg.type === "ping") {
       const room = meta.roomCode ? rooms.get(meta.roomCode) : undefined;
       if (room && meta.role === "player" && meta.playerId) {
-        applySideEffects(room, apply(room.state, { type: "heartbeat", playerId: meta.playerId }, now, env), ws);
-        applySideEffects(room, apply(room.state, { type: "tick" }, now, env), null);
+        await mutate(room, { type: "heartbeat", playerId: meta.playerId }, ws);
+        await mutate(room, { type: "tick" }, null);
         if (msg.v != null && msg.v !== room.state.version) {
           const player = room.state.players[meta.playerId];
           if (player && !player.kicked) {
@@ -352,7 +385,7 @@ export async function startLocalServer(opts: LocalOptions = {}): Promise<Running
           }
         }
       } else if (room) {
-        applySideEffects(room, apply(room.state, { type: "tick" }, now, env), null);
+        await mutate(room, { type: "tick" }, null);
       }
       send(ws, { type: "pong", clientTs: msg.clientTs, serverTs: now, version: room?.state.version ?? 0 });
       return;
@@ -380,7 +413,8 @@ export async function startLocalServer(opts: LocalOptions = {}): Promise<Running
       if (!hostOk(ws, msg.token, now)) return;
       const code = newCode();
       const state = createRoom(code, now);
-      const room: Runtime = { state, conns: new Set(), dirty: new Set(), lastAdmin: 0, lastStandings: 0 };
+      await store.createRoom(state, config);
+      const room: Runtime = { code, state, conns: new Set(), dirty: new Set(), lastAdmin: 0, lastStandings: 0 };
       rooms.set(code, room);
       unlink(ws, false);
       meta.role = "host";
@@ -403,6 +437,7 @@ export async function startLocalServer(opts: LocalOptions = {}): Promise<Running
       meta.role = "host";
       meta.roomCode = code;
       room.conns.add(ws);
+      await refresh(room);
       send(ws, { type: "state", role: "host", state: adminView(room.state, env, now, features), serverTs: now });
       return;
     }
@@ -414,6 +449,7 @@ export async function startLocalServer(opts: LocalOptions = {}): Promise<Running
         send(ws, { type: "error", code: "room_not_found", message: "Open a room first.", serverTs: now });
         return;
       }
+      await refresh(room);
       send(ws, { type: "admin", admin: adminView(room.state, env, now, features), serverTs: now, clientTs });
       return;
     }
@@ -444,6 +480,7 @@ export async function startLocalServer(opts: LocalOptions = {}): Promise<Running
       meta.role = "screen";
       meta.roomCode = code;
       room.conns.add(ws);
+      await refresh(room);
       send(ws, { type: "state", role: "screen", state: screenView(room.state, env, now, features), serverTs: now });
       return;
     }
@@ -456,11 +493,8 @@ export async function startLocalServer(opts: LocalOptions = {}): Promise<Running
         return;
       }
       unlink(ws, true);
-      const result = apply(room.state, { type: "join", name: String(msg.displayName ?? ""), deviceId: String(msg.deviceId ?? "") }, now, env);
-      if (!result.ok || !result.joined) {
-        applySideEffects(room, result, ws, clientTs);
-        return;
-      }
+      const result = await mutate(room, { type: "join", name: String(msg.displayName ?? ""), deviceId: String(msg.deviceId ?? "") }, ws, clientTs);
+      if (!result.ok || !result.joined) return;
       const player = room.state.players[result.joined.playerId];
       const exp = now + config.sessionTtlHours * 3_600_000;
       const token = issueToken({ r: "p", exp, room: code, pid: player.id, did: player.deviceId }, signingKey);
@@ -478,7 +512,6 @@ export async function startLocalServer(opts: LocalOptions = {}): Promise<Running
         serverTs: now,
         clientTs,
       });
-      applySideEffects(room, result, null);
       return;
     }
 
@@ -494,11 +527,8 @@ export async function startLocalServer(opts: LocalOptions = {}): Promise<Running
         return;
       }
       unlink(ws, true);
-      const result = apply(room.state, { type: "resume", playerId: payload.pid, deviceId: String(msg.deviceId ?? payload.did) }, now, env);
-      if (!result.ok || !result.joined) {
-        applySideEffects(room, result, ws, clientTs);
-        return;
-      }
+      const result = await mutate(room, { type: "resume", playerId: payload.pid, deviceId: String(msg.deviceId ?? payload.did) }, ws, clientTs);
+      if (!result.ok || !result.joined) return;
       meta.role = "player";
       meta.roomCode = payload.room;
       meta.playerId = payload.pid;
@@ -513,7 +543,6 @@ export async function startLocalServer(opts: LocalOptions = {}): Promise<Running
         serverTs: now,
         clientTs,
       });
-      applySideEffects(room, result, null);
       return;
     }
 
@@ -537,8 +566,7 @@ export async function startLocalServer(opts: LocalOptions = {}): Promise<Running
         send(ws, { type: "error", code: "bad_message", message: "Players cannot do that.", serverTs: now });
         return;
       }
-      const result = apply(room.state, cmd, now, env);
-      applySideEffects(room, result, ws, clientTs);
+      await mutate(room, cmd, ws, clientTs);
       return;
     }
 
@@ -551,8 +579,7 @@ export async function startLocalServer(opts: LocalOptions = {}): Promise<Running
         send(ws, { type: "error", code: "room_not_found", message: "Open a room first.", serverTs: now });
         return;
       }
-      const result = apply(room.state, hostCmd, now, env);
-      applySideEffects(room, result, ws, clientTs);
+      const result = await mutate(room, hostCmd, ws, clientTs);
       if (result.ok) send(ws, { type: "admin", admin: adminView(room.state, env, Date.now(), features), serverTs: Date.now() });
       return;
     }
@@ -586,7 +613,10 @@ export async function startLocalServer(opts: LocalOptions = {}): Promise<Running
       res.end("Not found");
       return;
     }
-    res.writeHead(200, { "content-type": mime(file) });
+    const headers: Record<string, string> = { "content-type": mime(file) };
+    const cc = cacheControl(file);
+    if (cc) headers["cache-control"] = cc;
+    res.writeHead(200, headers);
     createReadStream(file).pipe(res);
   });
 
