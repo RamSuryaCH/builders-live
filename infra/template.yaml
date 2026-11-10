@@ -60,6 +60,8 @@ Globals:
     Timeout: 10
     MemorySize: 256
     Tracing: PassThrough
+    Tags:
+      project: builders-live
 
 Resources:
   Table:
@@ -81,30 +83,45 @@ Resources:
         Enabled: true
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: false
+      Tags:
+        - Key: project
+          Value: builders-live
 
   TimerQueue:
     Type: AWS::SQS::Queue
     Properties:
       VisibilityTimeout: 60
       MessageRetentionPeriod: 3600
+      Tags:
+        - Key: project
+          Value: builders-live
 
   WsLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub /aws/lambda/${AWS::StackName}-ws
       RetentionInDays: 7
+      Tags:
+        - Key: project
+          Value: builders-live
 
   TimerLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub /aws/lambda/${AWS::StackName}-timer
       RetentionInDays: 7
+      Tags:
+        - Key: project
+          Value: builders-live
 
   SecretLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub /aws/lambda/${AWS::StackName}-secret-init
       RetentionInDays: 7
+      Tags:
+        - Key: project
+          Value: builders-live
 
   WsFunction:
     Type: AWS::Serverless::Function
@@ -112,6 +129,8 @@ Resources:
     Properties:
       FunctionName: !Sub ${AWS::StackName}-ws
       CodeUri: ../dist-lambda/ws/
+      Tags:
+        project: builders-live
       Handler: handler.handler
       Environment:
         Variables:
@@ -148,6 +167,8 @@ Resources:
     Properties:
       FunctionName: !Sub ${AWS::StackName}-timer
       CodeUri: ../dist-lambda/timer/
+      Tags:
+        project: builders-live
       Handler: handler.handler
       Environment:
         Variables:
@@ -180,6 +201,8 @@ Resources:
     Properties:
       FunctionName: !Sub ${AWS::StackName}-secret-init
       CodeUri: ../dist-lambda/secret-init/
+      Tags:
+        project: builders-live
       Handler: handler.handler
       Policies:
         - Statement:
@@ -206,6 +229,9 @@ Resources:
     Properties:
       LogGroupName: !Sub /aws/lambda/${AWS::StackName}-summary
       RetentionInDays: 7
+      Tags:
+        - Key: project
+          Value: builders-live
 
   BedrockFunction:
     Type: AWS::Serverless::Function
@@ -214,6 +240,8 @@ Resources:
     Properties:
       FunctionName: !Sub ${AWS::StackName}-summary
       CodeUri: ../dist-lambda/bedrock/
+      Tags:
+        project: builders-live
       Handler: handler.handler
       Timeout: 20
       ReservedConcurrentExecutions: 1
@@ -241,6 +269,8 @@ Resources:
       Name: !Sub ${AWS::StackName}-ws
       ProtocolType: WEBSOCKET
       RouteSelectionExpression: $request.body.type
+      Tags:
+        project: builders-live
 
   WsIntegration:
     Type: AWS::ApiGatewayV2::Integration
@@ -279,6 +309,8 @@ Resources:
       ApiId: !Ref WebSocketApi
       StageName: prod
       AutoDeploy: true
+      Tags:
+        project: builders-live
 
   WsPermission:
     Type: AWS::Lambda::Permission
@@ -303,6 +335,9 @@ Resources:
       OwnershipControls:
         Rules:
           - ObjectOwnership: BucketOwnerEnforced
+      Tags:
+        - Key: project
+          Value: builders-live
 
   FrontendOAC:
     Type: AWS::CloudFront::OriginAccessControl
@@ -341,6 +376,9 @@ Resources:
           - ErrorCode: 404
             ResponseCode: 200
             ResponsePagePath: /index.html
+      Tags:
+        - Key: project
+          Value: builders-live
 
   FrontendBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -386,6 +424,9 @@ Resources:
           Subscribers:
             - SubscriptionType: EMAIL
               Address: !Ref BudgetAlertEmail
+      ResourceTags:
+        - Key: project
+          Value: builders-live
 
 Outputs:
   WebSocketUrl:

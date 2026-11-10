@@ -4,6 +4,7 @@ import test from "node:test";
 
 test("the SAM template stays serverless, cheap, and in Sydney", async () => {
   const yaml = await readFile(new URL("../infra/template.yaml", import.meta.url), "utf8");
+  const deploy = await readFile(new URL("../deploy/cloudshell-deploy.sh", import.meta.url), "utf8");
   assert.match(yaml, /ap-southeast-2/);
   assert.match(yaml, /PAY_PER_REQUEST/);
   assert.match(yaml, /TimeToLiveSpecification/);
@@ -18,4 +19,7 @@ test("the SAM template stays serverless, cheap, and in Sydney", async () => {
   assert.doesNotMatch(yaml, /ProvisionedThroughput/);
   assert.doesNotMatch(yaml, /AWS::SecretsManager/);
   assert.doesNotMatch(yaml, /KnowledgeBase/);
+  assert.match(yaml, /ResourceTags:\n\s+- Key: project\n\s+Value: builders-live/);
+  assert.match(deploy, /mktemp --suffix=\.toml/);
+  assert.match(deploy, /--tags project=builders-live/);
 });

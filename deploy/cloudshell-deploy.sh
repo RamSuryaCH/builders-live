@@ -3,17 +3,13 @@
 # The host PIN and budget email are asked for here. They are not stored in git.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# AWS_REGION wins over AWS_DEFAULT_REGION. Set both so CloudShell cannot deploy elsewhere.
+export AWS_REGION=ap-southeast-2
 export AWS_DEFAULT_REGION=ap-southeast-2
 STACK="${STACK_NAME:-builders-live}"
 
 if ! aws sts get-caller-identity >/dev/null 2>&1; then
   echo "AWS credentials are not available. Open this repo in AWS CloudShell and run the script again."
-  exit 1
-fi
-
-REGION="$(aws configure get region || true)"
-if [[ -n "${AWS_DEFAULT_REGION}" && "${AWS_DEFAULT_REGION}" != "ap-southeast-2" ]]; then
-  echo "Refusing to deploy outside ap-southeast-2."
   exit 1
 fi
 
@@ -49,7 +45,8 @@ npm ci
 npm run build:server
 sam build --template infra/template.yaml
 
-CFG="$(mktemp)"
+# SAM only accepts a config file whose name ends in .toml, .yaml, or .yml.
+CFG="$(mktemp --suffix=.toml)"
 trap 'rm -f "$CFG"' EXIT
 python3 - "$CFG" "$STACK" "$ADMIN_SECRET" "$BUDGET_EMAIL" <<'PY'
 import sys
@@ -71,7 +68,11 @@ parameter_overrides = "{overrides}"
 """)
 PY
 chmod 600 "$CFG"
-sam deploy --config-file "$CFG" --template-file .aws-sam/build/template.yaml --no-confirm-changeset
+sam deploy \
+  --config-file "$CFG" \
+  --template-file .aws-sam/build/template.yaml \
+  --no-confirm-changeset \
+  --tags project=builders-live
 
 read_output() {
   aws cloudformation describe-stacks --stack-name "$STACK" --region ap-southeast-2 \
@@ -81,6 +82,10 @@ DOMAIN="$(read_output CloudFrontDomain)"
 BUCKET="$(read_output FrontendBucketName)"
 DIST="$(read_output DistributionId)"
 WS="$(read_output WebSocketUrl)"
+if [[ -z "$DOMAIN" || -z "$BUCKET" || -z "$DIST" || -z "$WS" || "$DOMAIN" == "None" || "$BUCKET" == "None" ]]; then
+  echo "Stack outputs are missing. Check the ${STACK} stack in ap-southeast-2."
+  exit 1
+fi
 SITE="https://${DOMAIN}"
 
 PUBLIC_BASE_URL="$SITE" VITE_WS_URL="$WS" npm run build:web
