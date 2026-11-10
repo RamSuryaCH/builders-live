@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { loadConfig, validateConfig } from "../src/shared/event-config.js";
+import { battleLabels } from "../src/shared/labels.js";
 import { apply, createRoom, planRounds, type EngineEnv } from "../src/shared/engine.js";
 import { isProfane } from "../src/shared/profanity.js";
 import { loadQuestions, validateQuestions } from "../src/shared/questions.js";
@@ -115,6 +116,9 @@ test("battle scores once, ignores a late or duplicate answer, and keeps the team
   assert.equal(state.battle.phase, "question");
   assert.equal(state.battle.questionId, "q01");
   const hidden = battleView(state, env);
+  const labels = battleLabels(hidden);
+  assert.equal(labels.round, "ROUND 1 OF 5 · WARM UP");
+  assert.equal(labels.question, "QUESTION 1 OF 6");
   assert.equal(hidden.reveal, null);
   assert.equal(hidden.question?.choices.some((c) => "correct" in c), false);
 

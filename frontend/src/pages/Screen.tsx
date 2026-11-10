@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { battleLabels } from "@shared/labels";
 import type { LobbyView, PublicBattle, PublicBoard, PublicCursor, PublicGroup, PublicQa, ScreenView, ServerMessage, Standings } from "@shared/protocol";
 import { BoardView } from "../components/Board";
 import { Qr } from "../components/Qr";
@@ -92,10 +93,13 @@ function Lobby({ eventName, code, joinUrl, lobby }: { eventName: string; code: s
 function BattleWall({ battle, standings, now }: { battle: PublicBattle; standings: Standings; now: number }) {
   const remaining = battle.phase === "paused" ? battle.pausedRemainingMs ?? 0 : battle.endsAt ? Math.max(0, battle.endsAt - now) : 0;
   const max = Math.max(1, ...standings.teams.map((t) => t.score));
+  const labels = battleLabels(battle);
+  const showQuestionLine = Boolean(battle.question);
   return (
     <div className="battle-layout">
       <div>
-        <p className="kicker">Team Battle · Round {Math.max(battle.round, 1)} of {battle.rounds}</p>
+        <p className="kicker">{battle.round > 0 ? labels.round : "Team Battle"}</p>
+        {showQuestionLine && <p className="subkicker">{labels.question}</p>}
         {battle.phase === "intro" && <h1>{battle.roundIntro || battle.roundTitle}</h1>}
         {(battle.phase === "question" || battle.phase === "paused") && battle.question && <h1>{battle.question.prompt}</h1>}
         {battle.phase === "paused" && <p className="kicker">Paused</p>}

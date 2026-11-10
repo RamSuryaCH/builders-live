@@ -43,9 +43,9 @@ Correct answers score 500 points plus up to 500 more for speed. A wrong answer s
 
 The dashboard shows who is active, idle, or disconnected, progress through the current question, and accuracy per player, per team, and per question.
 
-## People
+## Players
 
-**Kick** removes someone. Tick **Block rejoining** to refuse that device for the rest of the session. **Lock room** stops new people. People already inside can still reconnect. **Reset** clears scores, the board, questions, and blocks, and returns the wall to the lobby. People stay in their teams.
+**Kick** removes a player. Tick **Block rejoining** to refuse that device for the rest of the session. **Lock room** stops new players. Players already inside can still reconnect. **Reset** clears scores, the board, questions, and blocks, and returns the wall to the lobby. Players stay in their teams.
 
 ## Build Board
 

@@ -74,7 +74,7 @@ The session token stays in the browser. A reload or a Wi-Fi blip resumes the sam
 
 Open `/host`, enter the host PIN, and create the room. The full walkthrough is [docs/host-guide.md](docs/host-guide.md).
 
-The dashboard is the admin view: scores, who is active, idle, or disconnected, progress through the round, and accuracy per player, per team, and per question. From the same screen you start, pause, resume, and skip, kick a disruptive player, and optionally block that device for the session.
+The dashboard is the admin view: scores, who is active, idle, or disconnected, progress through the round, and accuracy per player, per team, and per question. The attendee list is titled Players. From the same screen you start, pause, resume, and skip, kick a disruptive player, and optionally block that device for the session.
 
 The host PIN is compared as a scrypt hash. The hash lives in SSM Parameter Store (SecureString, standard tier). Sessions are short-lived signed tokens. Login is throttled after repeated failures.
 
