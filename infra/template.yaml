@@ -1,0 +1,402 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Builders Live. Serverless live meetup room in ap-southeast-2. No NAT and no provisioned capacity.
+
+Rules:
+  SydneyOnly:
+    Assertions:
+      - Assert: !Equals [!Ref "AWS::Region", "ap-southeast-2"]
+        AssertDescription: Deploy Builders Live only in ap-southeast-2.
+
+Parameters:
+  AdminSecret:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    MaxLength: 72
+    Description: Host PIN. Not stored in the repo. A scrypt hash is written to SSM Parameter Store SecureString.
+  BudgetAlertEmail:
+    Type: String
+    AllowedPattern: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+    Description: Inbox for the 5 USD monthly budget alert. AWS asks this address to confirm.
+  EnableBedrockSummary:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Host-only question summary. Leave false.
+  BedrockModelId:
+    Type: String
+    Default: amazon.nova-lite-v1:0
+    Description: Bedrock model id used only when summaries are enabled.
+  BedrockMaxTokens:
+    Type: Number
+    Default: 400
+    MinValue: 64
+    MaxValue: 800
+  BedrockTopN:
+    Type: Number
+    Default: 10
+    MinValue: 1
+    MaxValue: 20
+  BedrockGuardrailId:
+    Type: String
+    Default: ""
+  BedrockGuardrailVersion:
+    Type: String
+    Default: ""
+  DataTtlHours:
+    Type: Number
+    Default: 24
+    MinValue: 1
+    MaxValue: 72
+
+Conditions:
+  BedrockOn: !Equals [!Ref EnableBedrockSummary, "true"]
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Architectures: [arm64]
+    Timeout: 10
+    MemorySize: 256
+    Tracing: PassThrough
+
+Resources:
+  Table:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: false
+
+  TimerQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 60
+      MessageRetentionPeriod: 3600
+
+  WsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-ws
+      RetentionInDays: 7
+
+  TimerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-timer
+      RetentionInDays: 7
+
+  SecretLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-secret-init
+      RetentionInDays: 7
+
+  WsFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: WsLogGroup
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-ws
+      CodeUri: ../dist-lambda/ws/
+      Handler: handler.handler
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref Table
+          TIMER_QUEUE_URL: !Ref TimerQueue
+          HASH_PARAM: !Sub /builders-live/${AWS::StackName}/admin-secret-hash
+          SIGNING_PARAM: !Sub /builders-live/${AWS::StackName}/signing-key
+          WEBSOCKET_MANAGEMENT_ENDPOINT: !Sub https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/prod
+          ENABLE_BEDROCK_SUMMARY: !Ref EnableBedrockSummary
+          BEDROCK_FUNCTION_NAME: !If [BedrockOn, !Ref BedrockFunction, ""]
+          BEDROCK_TOP_N: !Ref BedrockTopN
+          DATA_TTL_HOURS: !Ref DataTtlHours
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt TimerQueue.QueueName
+        - Statement:
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource:
+                - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/builders-live/${AWS::StackName}/admin-secret-hash
+                - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/builders-live/${AWS::StackName}/signing-key
+            - Effect: Allow
+              Action: execute-api:ManageConnections
+              Resource: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*
+            - Effect: Allow
+              Action: lambda:InvokeFunction
+              Resource: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-summary
+
+  TimerFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: TimerLogGroup
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-timer
+      CodeUri: ../dist-lambda/timer/
+      Handler: handler.handler
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref Table
+          TIMER_QUEUE_URL: !Ref TimerQueue
+          WEBSOCKET_MANAGEMENT_ENDPOINT: !Sub https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/prod
+          DATA_TTL_HOURS: !Ref DataTtlHours
+          ENABLE_BEDROCK_SUMMARY: "false"
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt TimerQueue.QueueName
+        - SQSPollerPolicy:
+            QueueName: !GetAtt TimerQueue.QueueName
+        - Statement:
+            - Effect: Allow
+              Action: execute-api:ManageConnections
+              Resource: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*
+      Events:
+        Queue:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt TimerQueue.Arn
+            BatchSize: 5
+
+  SecretInitFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: SecretLogGroup
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-secret-init
+      CodeUri: ../dist-lambda/secret-init/
+      Handler: handler.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ssm:PutParameter
+                - ssm:GetParameter
+                - ssm:DeleteParameter
+              Resource:
+                - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/builders-live/${AWS::StackName}/admin-secret-hash
+                - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/builders-live/${AWS::StackName}/signing-key
+
+  SecretInit:
+    Type: Custom::SecretInit
+    Properties:
+      ServiceToken: !GetAtt SecretInitFunction.Arn
+      AdminSecret: !Ref AdminSecret
+      HashName: !Sub /builders-live/${AWS::StackName}/admin-secret-hash
+      SigningName: !Sub /builders-live/${AWS::StackName}/signing-key
+
+  BedrockLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: BedrockOn
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-summary
+      RetentionInDays: 7
+
+  BedrockFunction:
+    Type: AWS::Serverless::Function
+    Condition: BedrockOn
+    DependsOn: BedrockLogGroup
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-summary
+      CodeUri: ../dist-lambda/bedrock/
+      Handler: handler.handler
+      Timeout: 20
+      ReservedConcurrentExecutions: 1
+      Environment:
+        Variables:
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+          BEDROCK_MAX_TOKENS: !Ref BedrockMaxTokens
+          BEDROCK_TOP_N: !Ref BedrockTopN
+          BEDROCK_GUARDRAIL_ID: !Ref BedrockGuardrailId
+          BEDROCK_GUARDRAIL_VERSION: !Ref BedrockGuardrailVersion
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:ApplyGuardrail
+              Resource:
+                - !Sub arn:aws:bedrock:${AWS::Region}::foundation-model/${BedrockModelId}
+                - !Sub arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/*
+                - !Sub arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:guardrail/*
+
+  WebSocketApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub ${AWS::StackName}-ws
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: $request.body.type
+
+  WsIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WsFunction.Arn}/invocations
+
+  ConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: $connect
+      AuthorizationType: NONE
+      Target: !Sub integrations/${WsIntegration}
+
+  DisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: $disconnect
+      AuthorizationType: NONE
+      Target: !Sub integrations/${WsIntegration}
+
+  DefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: $default
+      AuthorizationType: NONE
+      Target: !Sub integrations/${WsIntegration}
+
+  Stage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref WebSocketApi
+      StageName: prod
+      AutoDeploy: true
+
+  WsPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref WsFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*
+
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+
+  FrontendOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub ${AWS::StackName}-oac
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        HttpVersion: http2
+        PriceClass: PriceClass_All
+        DefaultRootObject: index.html
+        Origins:
+          - Id: site
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt FrontendOAC.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+        DefaultCacheBehavior:
+          TargetOriginId: site
+          ViewerProtocolPolicy: redirect-to-https
+          Compress: true
+          AllowedMethods: [GET, HEAD, OPTIONS]
+          CachedMethods: [GET, HEAD]
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFront
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub ${FrontendBucket.Arn}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}
+
+  CostBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub ${AWS::StackName}-monthly
+        BudgetLimit:
+          Amount: "5"
+          Unit: USD
+        TimeUnit: MONTHLY
+        BudgetType: COST
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref BudgetAlertEmail
+        - Notification:
+            NotificationType: FORECASTED
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref BudgetAlertEmail
+
+Outputs:
+  WebSocketUrl:
+    Value: !Sub wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/prod
+  CloudFrontDomain:
+    Value: !GetAtt Distribution.DomainName
+  CloudFrontUrl:
+    Value: !Sub https://${Distribution.DomainName}
+  DistributionId:
+    Value: !Ref Distribution
+  FrontendBucketName:
+    Value: !Ref FrontendBucket
+  Region:
+    Value: !Ref AWS::Region

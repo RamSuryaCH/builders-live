@@ -1,0 +1,362 @@
+[
+  {
+    "id": "q01",
+    "prompt": "Which service runs your code when a request arrives, without you managing servers?",
+    "choices": [
+      { "id": "a", "text": "AWS Lambda" },
+      { "id": "b", "text": "Amazon S3" },
+      { "id": "c", "text": "Amazon Route 53" },
+      { "id": "d", "text": "AWS CloudTrail" }
+    ],
+    "correct": "a",
+    "explanation": "Lambda runs your function on demand. You do not provision or patch servers for it."
+  },
+  {
+    "id": "q02",
+    "prompt": "Which service gives you virtual servers in the cloud?",
+    "choices": [
+      { "id": "a", "text": "Amazon EC2" },
+      { "id": "b", "text": "Amazon SQS" },
+      { "id": "c", "text": "Amazon SNS" },
+      { "id": "d", "text": "AWS IAM" }
+    ],
+    "correct": "a",
+    "explanation": "EC2 is virtual machines. You choose the operating system and the size."
+  },
+  {
+    "id": "q03",
+    "prompt": "What does IAM stand for?",
+    "choices": [
+      { "id": "a", "text": "Identity and Access Management" },
+      { "id": "b", "text": "Internet Access Monitor" },
+      { "id": "c", "text": "Instance Automation Module" },
+      { "id": "d", "text": "Internal Account Map" }
+    ],
+    "correct": "a",
+    "explanation": "IAM decides who can do what in your AWS account."
+  },
+  {
+    "id": "q04",
+    "prompt": "What is an Availability Zone?",
+    "choices": [
+      { "id": "a", "text": "One or more data centers in a Region, with separate power and networking" },
+      { "id": "b", "text": "A whole continent" },
+      { "id": "c", "text": "A billing account" },
+      { "id": "d", "text": "An IAM user" }
+    ],
+    "correct": "a",
+    "explanation": "A Region has several Availability Zones so one data-center failure does not take you down."
+  },
+  {
+    "id": "q05",
+    "prompt": "Which city is the AWS Region ap-southeast-2 in?",
+    "choices": [
+      { "id": "a", "text": "Sydney" },
+      { "id": "b", "text": "Singapore" },
+      { "id": "c", "text": "Jakarta" },
+      { "id": "d", "text": "Melbourne" }
+    ],
+    "correct": "a",
+    "explanation": "ap-southeast-2 is Sydney. Singapore is ap-southeast-1, Jakarta is ap-southeast-3, and Melbourne is ap-southeast-4."
+  },
+  {
+    "id": "q06",
+    "prompt": "In the AWS shared responsibility model, who secures the physical data centers?",
+    "choices": [
+      { "id": "a", "text": "AWS" },
+      { "id": "b", "text": "Each customer, for the building they are assigned" },
+      { "id": "c", "text": "Your internet provider" },
+      { "id": "d", "text": "IAM users" }
+    ],
+    "correct": "a",
+    "explanation": "AWS secures the cloud, including the hardware and the buildings. You secure your data, access, and configuration."
+  },
+  {
+    "id": "q07",
+    "prompt": "What does a VPC give you?",
+    "choices": [
+      { "id": "a", "text": "A private virtual network for your resources" },
+      { "id": "b", "text": "Object storage for files" },
+      { "id": "c", "text": "A public message queue" },
+      { "id": "d", "text": "Foundation models" }
+    ],
+    "correct": "a",
+    "explanation": "A VPC is your own isolated network in AWS, with subnets, route tables, and gateways."
+  },
+  {
+    "id": "q08",
+    "prompt": "A security group is best described as which of these?",
+    "choices": [
+      { "id": "a", "text": "A stateful virtual firewall for your resources" },
+      { "id": "b", "text": "A bucket of public files" },
+      { "id": "c", "text": "An IAM password policy" },
+      { "id": "d", "text": "A DNS record" }
+    ],
+    "correct": "a",
+    "explanation": "Security groups allow the traffic you choose, and return traffic is allowed automatically because they are stateful."
+  },
+  {
+    "id": "q09",
+    "prompt": "How is a network ACL different from a security group?",
+    "choices": [
+      { "id": "a", "text": "A network ACL is stateless" },
+      { "id": "b", "text": "A network ACL is an IAM policy" },
+      { "id": "c", "text": "A network ACL only works on Lambda" },
+      { "id": "d", "text": "There is no difference" }
+    ],
+    "correct": "a",
+    "explanation": "Network ACLs are stateless, so you allow both the request and the response. Security groups are stateful."
+  },
+  {
+    "id": "q10",
+    "prompt": "If one IAM statement allows an action and another explicitly denies it, what happens?",
+    "choices": [
+      { "id": "a", "text": "The explicit deny wins" },
+      { "id": "b", "text": "The allow wins" },
+      { "id": "c", "text": "The user picks at sign-in" },
+      { "id": "d", "text": "Only the older policy counts" }
+    ],
+    "correct": "a",
+    "explanation": "In IAM, an explicit deny always overrides an allow."
+  },
+  {
+    "id": "q11",
+    "prompt": "Amazon Route 53 is which kind of service?",
+    "choices": [
+      { "id": "a", "text": "DNS" },
+      { "id": "b", "text": "A virtual machine" },
+      { "id": "c", "text": "A message queue" },
+      { "id": "d", "text": "Block storage" }
+    ],
+    "correct": "a",
+    "explanation": "Route 53 answers DNS queries. It can also register domain names and health-check endpoints."
+  },
+  {
+    "id": "q12",
+    "prompt": "What is Amazon API Gateway commonly used for?",
+    "choices": [
+      { "id": "a", "text": "A front door for an HTTP, REST, or WebSocket API" },
+      { "id": "b", "text": "Storing virtual-machine disks" },
+      { "id": "c", "text": "Recording who changed a bucket policy" },
+      { "id": "d", "text": "Training a foundation model from scratch" }
+    ],
+    "correct": "a",
+    "explanation": "API Gateway receives API calls and can invoke Lambda or other backends. It supports HTTP, REST, and WebSocket APIs."
+  },
+  {
+    "id": "q13",
+    "prompt": "A student app just lost its photos. They were files in a bucket. Which service stored them?",
+    "choices": [
+      { "id": "a", "text": "Amazon S3" },
+      { "id": "b", "text": "Amazon EBS" },
+      { "id": "c", "text": "Amazon EC2" },
+      { "id": "d", "text": "Amazon SNS" }
+    ],
+    "correct": "a",
+    "explanation": "S3 stores files as objects in buckets. EBS is a disk for EC2, not a shared photo bucket."
+  },
+  {
+    "id": "q14",
+    "prompt": "Someone uploaded a new file with the same name and the old photo vanished. Which S3 feature keeps the earlier copy?",
+    "choices": [
+      { "id": "a", "text": "Versioning" },
+      { "id": "b", "text": "Transfer Acceleration" },
+      { "id": "c", "text": "Requester Pays" },
+      { "id": "d", "text": "Static website hosting" }
+    ],
+    "correct": "a",
+    "explanation": "Turn on versioning and an overwrite keeps the previous object as an older version. It is off until you enable it."
+  },
+  {
+    "id": "q15",
+    "prompt": "You want an audit trail of API calls in the account, including object deletes once data events are on. Which service is that?",
+    "choices": [
+      { "id": "a", "text": "AWS CloudTrail" },
+      { "id": "b", "text": "Amazon CloudFront" },
+      { "id": "c", "text": "Amazon Route 53" },
+      { "id": "d", "text": "AWS Budgets" }
+    ],
+    "correct": "a",
+    "explanation": "CloudTrail records API activity. Object-level deletes are data events, and those stay off until you enable them."
+  },
+  {
+    "id": "q16",
+    "prompt": "The photos that remain load slowly for students in other cities. What do you put in front of the bucket?",
+    "choices": [
+      { "id": "a", "text": "Amazon CloudFront" },
+      { "id": "b", "text": "Amazon SQS" },
+      { "id": "c", "text": "Amazon EBS" },
+      { "id": "d", "text": "AWS CloudTrail" }
+    ],
+    "correct": "a",
+    "explanation": "CloudFront caches objects at edge locations, closer to the people opening the app."
+  },
+  {
+    "id": "q17",
+    "prompt": "Captions and like counts are still in a table, one item per photo id. Which database fits?",
+    "choices": [
+      { "id": "a", "text": "Amazon DynamoDB" },
+      { "id": "b", "text": "Amazon CloudFront" },
+      { "id": "c", "text": "AWS IAM" },
+      { "id": "d", "text": "Amazon SNS" }
+    ],
+    "correct": "a",
+    "explanation": "DynamoDB is a NoSQL key-value and document database. One item per photo id is a natural fit."
+  },
+  {
+    "id": "q18",
+    "prompt": "You want the upload API to run code only when a student uploads, with no servers to patch. Which compute service fits?",
+    "choices": [
+      { "id": "a", "text": "AWS Lambda" },
+      { "id": "b", "text": "A single EC2 instance that stays on all night" },
+      { "id": "c", "text": "Amazon S3, because buckets run your functions" },
+      { "id": "d", "text": "Amazon VPC" }
+    ],
+    "correct": "a",
+    "explanation": "Lambda runs the upload function when a request arrives. S3 stores the file. A VPC is the network, not the compute."
+  },
+  {
+    "id": "q19",
+    "prompt": "Which service is a managed queue that lets parts of an app work at different speeds?",
+    "choices": [
+      { "id": "a", "text": "Amazon SQS" },
+      { "id": "b", "text": "Amazon CloudFront" },
+      { "id": "c", "text": "Amazon Route 53" },
+      { "id": "d", "text": "AWS IAM" }
+    ],
+    "correct": "a",
+    "explanation": "SQS holds messages until a worker is ready, so the sender does not wait for the worker."
+  },
+  {
+    "id": "q20",
+    "prompt": "Amazon SNS is mainly used for which job?",
+    "choices": [
+      { "id": "a", "text": "Tell many subscribers about one message" },
+      { "id": "b", "text": "Store objects" },
+      { "id": "c", "text": "Run containers" },
+      { "id": "d", "text": "Resolve DNS names" }
+    ],
+    "correct": "a",
+    "explanation": "SNS is publish/subscribe. One published message can fan out to many subscribers."
+  },
+  {
+    "id": "q21",
+    "prompt": "What do SQS FIFO queues add, compared with SQS standard queues?",
+    "choices": [
+      { "id": "a", "text": "Strict ordering and exactly-once processing" },
+      { "id": "b", "text": "A content delivery network" },
+      { "id": "c", "text": "GPU instances" },
+      { "id": "d", "text": "DNS health checks" }
+    ],
+    "correct": "a",
+    "explanation": "FIFO queues keep order inside a message group and deduplicate messages, so each message is processed once."
+  },
+  {
+    "id": "q22",
+    "prompt": "Which service do you pick for real-time streaming data, processed in order inside a shard?",
+    "choices": [
+      { "id": "a", "text": "Amazon Kinesis Data Streams" },
+      { "id": "b", "text": "Amazon EBS" },
+      { "id": "c", "text": "AWS Budgets" },
+      { "id": "d", "text": "Amazon Route 53" }
+    ],
+    "correct": "a",
+    "explanation": "Kinesis Data Streams ingests streaming records and keeps order per shard for the consumers."
+  },
+  {
+    "id": "q23",
+    "prompt": "A DynamoDB primary key can be which of these?",
+    "choices": [
+      { "id": "a", "text": "A partition key, or a partition key plus a sort key" },
+      { "id": "b", "text": "Only an email address" },
+      { "id": "c", "text": "Three SQL foreign keys" },
+      { "id": "d", "text": "A CloudFront cookie" }
+    ],
+    "correct": "a",
+    "explanation": "Every item has a partition key. Add a sort key when you need many items in the same partition."
+  },
+  {
+    "id": "q24",
+    "prompt": "What is the default read consistency for a DynamoDB GetItem?",
+    "choices": [
+      { "id": "a", "text": "Eventually consistent" },
+      { "id": "b", "text": "Strongly consistent, always" },
+      { "id": "c", "text": "Serializable across every Region" },
+      { "id": "d", "text": "It only reads from the local disk cache" }
+    ],
+    "correct": "a",
+    "explanation": "GetItem is eventually consistent unless you set ConsistentRead. Strong reads use more capacity."
+  },
+  {
+    "id": "q25",
+    "prompt": "Error rates just spiked. Which service holds the metrics, logs, and alarms?",
+    "choices": [
+      { "id": "a", "text": "Amazon CloudWatch" },
+      { "id": "b", "text": "Amazon Route 53" },
+      { "id": "c", "text": "AWS IAM" },
+      { "id": "d", "text": "Amazon SQS" }
+    ],
+    "correct": "a",
+    "explanation": "CloudWatch is for metrics, logs, and alarms. CloudTrail is the audit log of API calls."
+  },
+  {
+    "id": "q26",
+    "prompt": "S3 bucket names must be which of these?",
+    "choices": [
+      { "id": "a", "text": "Unique across all AWS accounts and Regions" },
+      { "id": "b", "text": "Unique only inside your account" },
+      { "id": "c", "text": "Unique only in one Availability Zone" },
+      { "id": "d", "text": "Reusable by anyone after 5 minutes" }
+    ],
+    "correct": "a",
+    "explanation": "The S3 bucket namespace is global. Two accounts cannot use the same bucket name."
+  },
+  {
+    "id": "q27",
+    "prompt": "You PUT a brand-new object to S3 and it succeeds. When can a later GET read it?",
+    "choices": [
+      { "id": "a", "text": "Immediately. S3 is strongly consistent for that read" },
+      { "id": "b", "text": "Only after 24 hours" },
+      { "id": "c", "text": "Only from the same Availability Zone" },
+      { "id": "d", "text": "Only after a CloudFront invalidation" }
+    ],
+    "correct": "a",
+    "explanation": "S3 gives strong read-after-write consistency for new objects and for overwrites."
+  },
+  {
+    "id": "q28",
+    "prompt": "What is the longest a single Lambda invocation can run?",
+    "choices": [
+      { "id": "a", "text": "15 minutes" },
+      { "id": "b", "text": "15 seconds" },
+      { "id": "c", "text": "60 minutes" },
+      { "id": "d", "text": "24 hours" }
+    ],
+    "correct": "a",
+    "explanation": "You can set the Lambda timeout up to 900 seconds, which is 15 minutes."
+  },
+  {
+    "id": "q29",
+    "prompt": "AWS Lambda charges are based mainly on which of these?",
+    "choices": [
+      { "id": "a", "text": "The number of requests and how long your code runs" },
+      { "id": "b", "text": "A monthly fee for each function name only" },
+      { "id": "c", "text": "The size of your git repository" },
+      { "id": "d", "text": "How many Regions AWS has" }
+    ],
+    "correct": "a",
+    "explanation": "You pay per request and for GB-seconds of duration, based on the memory you set."
+  },
+  {
+    "id": "q30",
+    "prompt": "What is Amazon Bedrock for?",
+    "choices": [
+      { "id": "a", "text": "Using foundation models through a managed API" },
+      { "id": "b", "text": "Registering domain names" },
+      { "id": "c", "text": "Attaching block storage to EC2" },
+      { "id": "d", "text": "Sending messages between queues" }
+    ],
+    "correct": "a",
+    "explanation": "Bedrock gives you foundation models through an API, without you running the model servers."
+  }
+]

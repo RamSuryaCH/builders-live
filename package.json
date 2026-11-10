@@ -1,0 +1,50 @@
+{
+  "name": "builders-live",
+  "version": "1.0.0",
+  "private": true,
+  "license": "SEE LICENSE IN LICENSE",
+  "description": "Source-available live multiplayer room for non-commercial AWS meetups.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsx src/server/dev.ts",
+    "start": "tsx src/server/local.ts",
+    "build": "npm run build:server && npm run build:web",
+    "build:server": "node scripts/bundle-lambdas.mjs",
+    "build:web": "vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p frontend/tsconfig.json --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "load-test": "tsx scripts/load-test.ts",
+    "secret-scan": "node scripts/secret-scan.mjs",
+    "validate": "sam validate --template infra/template.yaml --region ap-southeast-2 --lint",
+    "icons": "tsx scripts/render-brand.mjs"
+  },
+  "dependencies": {
+    "@aws-sdk/client-apigatewaymanagementapi": "^3.716.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.716.0",
+    "@aws-sdk/client-dynamodb": "^3.716.0",
+    "@aws-sdk/client-lambda": "^3.716.0",
+    "@aws-sdk/client-sqs": "^3.716.0",
+    "@aws-sdk/client-ssm": "^3.716.0",
+    "@aws-sdk/lib-dynamodb": "^3.716.0",
+    "@fontsource/outfit": "^5.2.5",
+    "qrcode": "^1.5.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/qrcode": "^1.5.5",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@types/ws": "^8.5.13",
+    "@vitejs/plugin-react": "^4.3.4",
+    "esbuild": "^0.24.2",
+    "sharp": "^0.33.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.6"
+  }
+}

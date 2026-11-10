@@ -1,0 +1,18 @@
+# Content, documentation, and image license
+
+Event content (`content/`), documentation (`docs/`), and images
+(`frontend/public/`, including the Open Graph image and icons) are licensed
+under Creative Commons Attribution-NonCommercial 4.0 International.
+
+- Licensor: Ram Surya Chelluboyina (https://github.com/RamSuryaCH)
+- Canonical legal code: https://creativecommons.org/licenses/by-nc/4.0/legalcode
+- Full text: `content/LICENSE` and `docs/LICENSE`
+
+You may use and adapt this material for non-commercial meetups, community
+events, and learning. Commercial use is not permitted.
+
+Code is covered separately by the PolyForm Noncommercial License 1.0.0 in
+`LICENSE` at the repository root.
+Licensor: Ram Surya Chelluboyina.
+
+Required Notice: Copyright Ram Surya Chelluboyina (https://github.com/RamSuryaCH)
