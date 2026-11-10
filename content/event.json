@@ -1,0 +1,110 @@
+{
+  "eventName": "Builders Live",
+  "groupName": "AWS Student Builder Group",
+  "tagline": "One room. Live on every phone.",
+  "eventDate": "2026-11-28",
+  "region": "ap-southeast-2",
+  "roomCap": 300,
+  "expectedAttendees": 50,
+  "description": "A live multiplayer room for AWS meetups. Join from your phone, play Team Battle, build on a shared board, ask questions, and meet other builders.",
+  "teams": [
+    { "id": "lambda", "name": "Lambda", "color": "#FF9900" },
+    { "id": "s3", "name": "S3", "color": "#3DAA6D" },
+    { "id": "dynamodb", "name": "DynamoDB", "color": "#4C6FFF" },
+    { "id": "cloudfront", "name": "CloudFront", "color": "#9B6BFF" },
+    { "id": "bedrock", "name": "Bedrock", "color": "#E85D4C" },
+    { "id": "ec2", "name": "EC2", "color": "#F2C14E" },
+    { "id": "sqs", "name": "SQS", "color": "#2BB0C4" },
+    { "id": "kinesis", "name": "Kinesis", "color": "#E56BB5" }
+  ],
+  "battle": {
+    "rounds": 5,
+    "questionsPerRound": 6,
+    "questionSeconds": 20,
+    "revealSeconds": 6,
+    "roundBreakSeconds": 8,
+    "introSeconds": 8,
+    "autoAdvanceRounds": true,
+    "pointsBase": 500,
+    "pointsSpeed": 500
+  },
+  "roundPlan": [
+    { "title": "Warm up" },
+    { "title": "Networks and access" },
+    {
+      "title": "A student app just lost its photos",
+      "intro": "A student app just lost its photos. What do you do next?"
+    },
+    { "title": "Data on the move" },
+    { "title": "Build the next piece" }
+  ],
+  "board": {
+    "broadcastHz": 8,
+    "rateLimitPerSec": 10,
+    "maxNodes": 60,
+    "maxEdges": 80,
+    "tiles": [
+      { "id": "lambda", "label": "Lambda", "group": "Compute" },
+      { "id": "ec2", "label": "EC2", "group": "Compute" },
+      { "id": "fargate", "label": "Fargate", "group": "Compute" },
+      { "id": "s3", "label": "S3", "group": "Storage" },
+      { "id": "dynamodb", "label": "DynamoDB", "group": "Database" },
+      { "id": "rds", "label": "RDS", "group": "Database" },
+      { "id": "aurora", "label": "Aurora", "group": "Database" },
+      { "id": "apigw", "label": "API Gateway", "group": "Network" },
+      { "id": "cloudfront", "label": "CloudFront", "group": "Network" },
+      { "id": "route53", "label": "Route 53", "group": "Network" },
+      { "id": "vpc", "label": "VPC", "group": "Network" },
+      { "id": "sqs", "label": "SQS", "group": "Integration" },
+      { "id": "sns", "label": "SNS", "group": "Integration" },
+      { "id": "eventbridge", "label": "EventBridge", "group": "Integration" },
+      { "id": "kinesis", "label": "Kinesis", "group": "Integration" },
+      { "id": "stepfunctions", "label": "Step Functions", "group": "Integration" },
+      { "id": "iam", "label": "IAM", "group": "Security" },
+      { "id": "cognito", "label": "Cognito", "group": "Security" },
+      { "id": "ssm", "label": "Parameter Store", "group": "Security" },
+      { "id": "bedrock", "label": "Bedrock", "group": "AI" },
+      { "id": "cloudwatch", "label": "CloudWatch", "group": "Observability" },
+      { "id": "cloudtrail", "label": "CloudTrail", "group": "Observability" }
+    ],
+    "challenges": [
+      { "id": "photos", "text": "Build a photo-sharing app" },
+      { "id": "chat", "text": "Build a real-time chat backend" },
+      { "id": "api", "text": "Build a serverless REST API" },
+      { "id": "leaderboard", "text": "Build a live leaderboard" },
+      { "id": "moderation", "text": "Build an image moderation pipeline" },
+      { "id": "multiplayer", "text": "Build a multiplayer game backend" }
+    ]
+  },
+  "qa": {
+    "maxQuestionLength": 200,
+    "rateLimitPerMin": 4
+  },
+  "match": {
+    "groupSizeMin": 2,
+    "groupSizeMax": 3,
+    "interests": [
+      "Serverless",
+      "AI / Bedrock",
+      "Data",
+      "Frontend",
+      "Security",
+      "Databases",
+      "Networking",
+      "Infrastructure as code",
+      "Containers",
+      "Cost"
+    ]
+  },
+  "sessionTtlHours": 18,
+  "dataTtlHours": 24,
+  "hostSessionHours": 8,
+  "heartbeatSeconds": 20,
+  "idleSeconds": 45,
+  "disconnectSeconds": 50,
+  "login": {
+    "maxFailures": 5,
+    "windowSeconds": 600,
+    "lockoutSeconds": 900
+  }
+}

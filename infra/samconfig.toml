@@ -1,0 +1,11 @@
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "builders-live"
+region = "ap-southeast-2"
+capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM"
+confirm_changeset = false
+fail_on_empty_changeset = false
+resolve_s3 = true
+# Host PIN and budget email are passed by deploy/cloudshell-deploy.sh.
+# Do not put them in this file.
