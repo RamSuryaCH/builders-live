@@ -2,7 +2,7 @@
 import { writeSync } from "node:fs";
 import { WebSocket } from "ws";
 import type { ClientMessage, ServerMessage } from "../src/shared/protocol.js";
-import { startLocalServer } from "../src/server/local.js";
+import { startLocalServer, type RunningServer } from "../src/server/local.js";
 
 interface Sample {
   join: number[];
@@ -88,24 +88,43 @@ class Bot {
   }
 }
 
-async function scenario(clients: number): Promise<Sample> {
+interface Target {
+  wsUrl: string;
+  hostPin: string;
+  remote: boolean;
+  server: RunningServer | null;
+  waitMs: number;
+}
+
+async function resolveTarget(): Promise<Target> {
+  const wsUrl = process.env.WS_URL?.trim();
+  if (wsUrl) {
+    const hostPin = process.env.HOST_PIN?.trim();
+    if (!hostPin) {
+      throw new Error("HOST_PIN is required when WS_URL is set");
+    }
+    return { wsUrl, hostPin, remote: true, server: null, waitMs: 20000 };
+  }
+  const server = await startLocalServer({ port: 0, adminSecret: "local-dev-pin" });
+  return { wsUrl: server.wsUrl, hostPin: "local-dev-pin", remote: false, server, waitMs: 8000 };
+}
+
+async function scenario(clients: number, target: Target): Promise<Sample> {
   const sample: Sample = { join: [], answer: [], board: [], errors: 0, ops: 0, mismatches: 0, clients };
   const watchdog = setTimeout(() => {
     writeSync(2, `watchdog stuck in ${phase}\n`);
     process.exit(1);
-  }, 20000);
-  mark(`listen-${clients}`);
-  const server = await startLocalServer({ port: 0, adminSecret: "local-dev-pin" });
+  }, target.remote ? 120000 : 45000);
+  mark(`host-${clients}`);
   const random = rnd(20261128 + clients);
+  const host = new Bot(target.wsUrl, "host");
   try {
-    mark(`host-${clients}`);
-    const host = new Bot(server.wsUrl, "host");
     await host.open();
-    host.send({ type: "host.login", secret: "local-dev-pin", clientTs: Date.now() });
-    const welcome = await host.wait("host.welcome");
+    host.send({ type: "host.login", secret: target.hostPin, clientTs: Date.now() });
+    const welcome = await host.wait("host.welcome", target.waitMs);
     if (welcome.type !== "host.welcome") throw new Error("host login failed");
     host.send({ type: "host.createRoom", token: welcome.token, clientTs: Date.now() });
-    const created = await host.wait("room.created");
+    const created = await host.wait("room.created", target.waitMs);
     if (created.type !== "room.created") throw new Error("room was not created");
     const code = created.roomCode;
 
@@ -115,13 +134,26 @@ async function scenario(clients: number): Promise<Sample> {
       const chunk = Math.min(40, clients - start);
       await Promise.all(Array.from({ length: chunk }, async (_, offset) => {
         const i = start + offset;
-        const bot = new Bot(server.wsUrl, `dev-${clients}-${i}`);
+        const bot = new Bot(target.wsUrl, `dev-${clients}-${i}`);
         bot.name = `Builder ${i + 1}`;
-        await bot.open();
+        try {
+          await bot.open();
+        } catch {
+          sample.errors += 1;
+          sample.ops += 1;
+          return;
+        }
         const clientTs = Date.now();
         sample.ops += 1;
         bot.send({ type: "join", roomCode: code, displayName: bot.name, deviceId: bot.deviceId, clientTs });
-        const msg = await bot.wait("welcome");
+        let msg: ServerMessage;
+        try {
+          msg = await bot.wait("welcome", target.waitMs);
+        } catch {
+          sample.errors += 1;
+          bot.close();
+          return;
+        }
         if (msg.type !== "welcome") {
           sample.errors += 1;
           return;
@@ -137,7 +169,7 @@ async function scenario(clients: number): Promise<Sample> {
 
     mark(`start-${clients}`);
     host.send({ type: "host.start", token: welcome.token, clientTs: Date.now() });
-    const battle = await bots[0].wait("battle");
+    const battle = await bots[0].wait("battle", target.waitMs);
     if (battle.type !== "battle" || !battle.battle.question) throw new Error("question did not start");
     const questionId = battle.battle.question.id;
 
@@ -148,7 +180,7 @@ async function scenario(clients: number): Promise<Sample> {
         bot.close();
         await bot.open();
         bot.send({ type: "resume", token: bot.token, deviceId: bot.deviceId, clientTs: Date.now() });
-        const restored = await bot.wait("welcome");
+        const restored = await bot.wait("welcome", target.waitMs);
         if (restored.type !== "welcome" || restored.state.you.score !== before || restored.state.you.teamId !== bot.teamId) {
           sample.mismatches += 1;
         }
@@ -158,7 +190,7 @@ async function scenario(clients: number): Promise<Sample> {
       const choice = i % 7 === 0 ? "b" : "a";
       sample.ops += 1;
       bot.send({ type: "answer", questionId, choiceId: choice, clientMsgId: `a-${i}`, clientTs });
-      const ack = await bot.wait("answer.ack");
+      const ack = await bot.wait("answer.ack", target.waitMs);
       if (ack.type !== "answer.ack") {
         sample.errors += 1;
         return;
@@ -167,7 +199,7 @@ async function scenario(clients: number): Promise<Sample> {
       if (!ack.ack.duplicate) bot.score = ack.ack.totalScore;
       sample.ops += 1;
       bot.send({ type: "answer", questionId, choiceId: "c", clientMsgId: `dup-${i}`, clientTs: Date.now() });
-      const dup = await bot.wait("answer.ack");
+      const dup = await bot.wait("answer.ack", target.waitMs);
       if (dup.type !== "answer.ack" || !dup.ack.duplicate || dup.ack.totalScore !== bot.score) sample.mismatches += 1;
     }));
 
@@ -179,7 +211,7 @@ async function scenario(clients: number): Promise<Sample> {
       bot.close();
       await bot.open();
       bot.send({ type: "resume", token: bot.token, deviceId: bot.deviceId, clientTs: Date.now() });
-      const restored = await bot.wait("welcome");
+      const restored = await bot.wait("welcome", target.waitMs);
       if (restored.type !== "welcome" || restored.state.you.score !== before || restored.state.you.teamId !== team) {
         sample.mismatches += 1;
       } else {
@@ -200,7 +232,7 @@ async function scenario(clients: number): Promise<Sample> {
           clientMsgId: `place-${i}`,
           clientTs,
         });
-        const placed = await bot.wait("ack");
+        const placed = await bot.wait("ack", target.waitMs);
         if (placed.type === "ack") sample.board.push(Date.now() - (placed.clientTs ?? clientTs));
         else sample.errors += 1;
       }
@@ -214,7 +246,7 @@ async function scenario(clients: number): Promise<Sample> {
           clientMsgId: `c-${i}-${n}`,
           clientTs,
         });
-        const ack = await bot.wait("ack");
+        const ack = await bot.wait("ack", target.waitMs);
         if (ack.type === "ack") sample.board.push(Date.now() - (ack.clientTs ?? clientTs));
         else sample.errors += 1;
       }
@@ -225,7 +257,7 @@ async function scenario(clients: number): Promise<Sample> {
     host.send({ type: "host.snapshot", token: welcome.token, clientTs: snapTs });
     let snap: ServerMessage | null = null;
     for (let attempt = 0; attempt < 8; attempt += 1) {
-      const msg = await host.wait("admin");
+      const msg = await host.wait("admin", target.waitMs);
       if (msg.type === "admin" && msg.clientTs === snapTs) {
         snap = msg;
         break;
@@ -243,7 +275,6 @@ async function scenario(clients: number): Promise<Sample> {
     for (const bot of bots) bot.close();
   } finally {
     clearTimeout(watchdog);
-    await server.close();
   }
   return sample;
 }
@@ -266,31 +297,43 @@ const mark = (next: string) => {
 
 const sizes = process.argv.slice(2).map(Number).filter((n) => n > 0);
 const runs = sizes.length ? sizes : [50, 200];
-const results = [];
-for (const n of runs) {
-  const sample = await scenario(n);
-  report(sample);
-  const errorRate = sample.ops ? sample.errors / sample.ops : 1;
-  const answerP95 = pct(sample.answer, 95);
-  const joinP95 = pct(sample.join, 95);
-  const boardP95 = pct(sample.board, 95);
-  results.push({
-    clients: n,
-    joinP50: pct(sample.join, 50),
-    joinP95: joinP95,
-    answerP50: pct(sample.answer, 50),
-    answerP95: answerP95,
-    boardP50: pct(sample.board, 50),
-    boardP95: boardP95,
-    errors: sample.errors,
-    ops: sample.ops,
-    mismatches: sample.mismatches,
-  });
-  if (sample.mismatches > 0 || errorRate > 0.01 || answerP95 > 500 || joinP95 > 500 || boardP95 > 500) {
-    console.error("load test failed");
-    console.log(JSON.stringify(results, null, 2));
-    process.exit(1);
-  }
+const target = await resolveTarget();
+if (target.remote) {
+  console.log(`Remote load test against ${target.wsUrl}`);
 }
-console.log("\nLOAD_TEST_JSON");
-console.log(JSON.stringify(results, null, 2));
+const results = [];
+try {
+  for (const n of runs) {
+    const sample = await scenario(n, target);
+    report(sample);
+    const errorRate = sample.ops ? sample.errors / sample.ops : 1;
+    const answerP95 = pct(sample.answer, 95);
+    const joinP95 = pct(sample.join, 95);
+    const boardP95 = pct(sample.board, 95);
+    results.push({
+      clients: n,
+      joinN: sample.join.length,
+      joinP50: pct(sample.join, 50),
+      joinP95: joinP95,
+      answerP50: pct(sample.answer, 50),
+      answerP95: answerP95,
+      boardP50: pct(sample.board, 50),
+      boardP95: boardP95,
+      errors: sample.errors,
+      ops: sample.ops,
+      mismatches: sample.mismatches,
+    });
+    if (sample.mismatches > 0 || errorRate > 0.01 || answerP95 > 500 || joinP95 > 500 || boardP95 > 500) {
+      console.error("load test failed");
+      console.log(JSON.stringify(results, null, 2));
+      process.exitCode = 1;
+      break;
+    }
+  }
+  if (!process.exitCode) {
+    console.log("\nLOAD_TEST_JSON");
+    console.log(JSON.stringify(results, null, 2));
+  }
+} finally {
+  if (target.server) await target.server.close();
+}

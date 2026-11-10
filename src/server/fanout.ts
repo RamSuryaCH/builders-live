@@ -1,17 +1,29 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Noncommercial-1.0.0
 import { ApiGatewayManagementApiClient, PostToConnectionCommand } from "@aws-sdk/client-apigatewaymanagementapi";
 import type { ServerMessage } from "../shared/protocol.js";
-import { listConnections } from "./aws-store.js";
+import { deleteConnection, listConnections } from "./aws-store.js";
 
 const endpoint = process.env.WEBSOCKET_MANAGEMENT_ENDPOINT ?? "";
 const api = new ApiGatewayManagementApiClient({ endpoint });
+
+function isGone(err: unknown): boolean {
+  const e = err as { name?: string; $metadata?: { httpStatusCode?: number }; statusCode?: number };
+  return e.name === "GoneException" || e.$metadata?.httpStatusCode === 410 || e.statusCode === 410;
+}
 
 export async function post(connectionId: string, msg: ServerMessage): Promise<void> {
   try {
     await api.send(new PostToConnectionCommand({ ConnectionId: connectionId, Data: Buffer.from(JSON.stringify(msg)) }));
   } catch (err) {
-    const status = (err as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
-    if (status !== 410) throw err;
+    if (isGone(err)) {
+      try {
+        await deleteConnection(connectionId);
+      } catch (cleanupErr) {
+        console.error("failed to clean gone connection", connectionId, cleanupErr);
+      }
+      return;
+    }
+    throw err;
   }
 }
 

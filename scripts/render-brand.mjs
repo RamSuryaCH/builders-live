@@ -25,6 +25,8 @@ await sharp(Buffer.from(og)).png().toFile("frontend/public/og.png");
 
 const icon = await readFile("frontend/public/favicon.svg");
 await sharp(icon).resize(32, 32).png().toFile("frontend/public/favicon-32.png");
+// Browsers accept a PNG payload for /favicon.ico; keeps a real file off the SPA fallback.
+await sharp(icon).resize(32, 32).png().toFile("frontend/public/favicon.ico");
 await sharp(icon).resize(180, 180).png().toFile("frontend/public/apple-touch-icon.png");
 await sharp(icon).resize(192, 192).png().toFile("frontend/public/icon-192.png");
 await sharp(icon).resize(512, 512).png().toFile("frontend/public/icon-512.png");
