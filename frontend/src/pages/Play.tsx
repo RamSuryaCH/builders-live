@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { loadConfig } from "@shared/event-config";
+import { battleLabels } from "@shared/labels";
 import type { PlayerView, PublicBattle, PublicCursor, PublicGroup, PublicQa, ServerMessage, Standings } from "@shared/protocol";
 import { BoardView } from "../components/Board";
 import { Ring, useNow } from "../components/Ring";
@@ -224,6 +225,7 @@ function Battle({
   onAnswer: (id: string) => void;
 }) {
   const remaining = battle.phase === "paused" ? battle.pausedRemainingMs ?? 0 : battle.endsAt ? Math.max(0, battle.endsAt - now) : 0;
+  const labels = battleLabels(battle);
   if (battle.phase === "idle") return <p className="waiting">Waiting for the host to start Team Battle.</p>;
   if (battle.phase === "finished") return <p className="waiting">Team Battle is over. Your score stays on the board.</p>;
   if (battle.phase === "intro" || (battle.phase === "paused" && !battle.question)) {
@@ -231,7 +233,7 @@ function Battle({
       <article className="story">
         <div className="q-top">
           <div>
-            <p>Round {battle.round} of {battle.rounds}</p>
+            <p className="kicker">{labels.round}</p>
             <h2>{battle.roundIntro || battle.roundTitle}</h2>
           </div>
           <Ring remainingMs={remaining} totalMs={battle.durationMs} light />
@@ -247,7 +249,8 @@ function Battle({
     <article className="q-card">
       <div className="q-top">
         <div>
-          <p className="kicker">{battle.roundTitle ?? `Round ${battle.round}`} · {battle.questionIndex + 1} of {battle.questionsInRound}</p>
+          <p className="kicker">{labels.round}</p>
+          <p className="subkicker">{labels.question}</p>
           <h2>{battle.question?.prompt}</h2>
         </div>
         <div>

@@ -166,6 +166,7 @@ input:focus { outline: 3px solid rgba(255, 153, 0, 0.45); border-color: var(--or
 }
 .q-card { padding: 16px; }
 .kicker { margin: 0 0 6px; color: var(--orange-deep); font-weight: 700; font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; }
+.subkicker { margin: 0 0 8px; color: var(--muted); font-weight: 700; font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; }
 .q-top { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
 .q-card h2 { margin: 0; font-size: 1.35rem; letter-spacing: -0.03em; }
 .choices { display: grid; gap: 10px; margin-top: 14px; }
@@ -279,6 +280,7 @@ input:focus { outline: 3px solid rgba(255, 153, 0, 0.45); border-color: var(--or
   padding: 28px 32px;
 }
 .screen .kicker { color: var(--orange); }
+.screen .subkicker { color: #ffd89a; }
 .lobby-layout, .battle-layout { display: grid; grid-template-columns: 1fr 320px; gap: 28px; align-items: start; }
 .joined-count { font-size: clamp(3rem, 8vw, 6rem); margin: 0; letter-spacing: -0.05em; line-height: 0.9; }
 .joined-count span { display: block; font-size: 1rem; letter-spacing: 0.08em; text-transform: uppercase; color: #ffd89a; font-weight: 700; }
