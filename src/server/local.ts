@@ -204,6 +204,12 @@ export async function startLocalServer(opts: LocalOptions = {}): Promise<Running
       void (async () => {
         await refresh(room);
         if (room.state.battle.generation !== generation) return;
+        // setTimeout runs on the monotonic clock, endsAt on Date.now(). If the wall clock is behind
+        // (VM pause/resume, clock step), the engine's tick would be a no-op with nothing re-armed.
+        if (Date.now() < at) {
+          arm(room, at);
+          return;
+        }
         await mutate(room, { type: "tick" }, null);
       })();
     }, wait);

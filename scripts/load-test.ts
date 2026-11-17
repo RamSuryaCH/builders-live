@@ -3,6 +3,15 @@ import { writeSync } from "node:fs";
 import { WebSocket } from "ws";
 import type { ClientMessage, ServerMessage } from "../src/shared/protocol.js";
 import { startLocalServer, type RunningServer } from "../src/server/local.js";
+import { loadConfig } from "../src/shared/event-config.js";
+
+interface GameStats {
+  questionsPlayed: number;
+  questionsPlanned: number;
+  roundsCompleted: number;
+  roundsTotal: number;
+  finished: boolean;
+}
 
 interface Sample {
   join: number[];
@@ -12,6 +21,20 @@ interface Sample {
   ops: number;
   mismatches: number;
   clients: number;
+  game?: GameStats;
+}
+
+const FULL_GAME = process.env.FULL_GAME === "1";
+
+/** Duration of a full game, from the event config: question and reveal windows, intros, and round breaks, plus 60 s. */
+function expectedGameMs(): number {
+  const config = loadConfig();
+  const b = config.battle;
+  const planned = config.roundPlan.reduce((sum, spec) => sum + (spec.count ?? b.questionsPerRound), 0);
+  const intros = config.roundPlan.filter((spec) => spec.intro).length;
+  const seconds =
+    planned * (b.questionSeconds + b.revealSeconds) + intros * b.introSeconds + (b.rounds - 1) * b.roundBreakSeconds;
+  return seconds * 1000 + 60000;
 }
 
 function pct(values: number[], p: number): number {
@@ -41,6 +64,9 @@ class Bot {
 
   name = "";
 
+  /** Optional tap on every inbound message, used by the full-game mode. */
+  onMessage: ((msg: ServerMessage) => void) | null = null;
+
   constructor(private url: string, readonly deviceId: string) {}
 
   open(): Promise<void> {
@@ -59,6 +85,7 @@ class Bot {
   }
 
   private ingest(msg: ServerMessage): void {
+    this.onMessage?.(msg);
     const idx = this.waiters.findIndex((w) => w.type === msg.type);
     if (idx >= 0) {
       const [waiter] = this.waiters.splice(idx, 1);
@@ -109,12 +136,82 @@ async function resolveTarget(): Promise<Target> {
   return { wsUrl: server.wsUrl, hostPin: "local-dev-pin", remote: false, server, waitMs: 8000 };
 }
 
+interface FullGameRun {
+  finished: Promise<void>;
+  stats: () => GameStats;
+  detach: () => void;
+}
+
+/** Hooks every bot to answer each question it is shown, and the host to watch the battle phases. */
+function attachFullGame(host: Bot, bots: Bot[], sample: Sample, random: () => number): FullGameRun {
+  const config = loadConfig();
+  const seen = new Set<string>();
+  const rounds = new Set<number>();
+  let finishedSeen = false;
+  let resolveFinished: () => void = () => {};
+  const finished = new Promise<void>((resolve) => {
+    resolveFinished = resolve;
+  });
+
+  host.onMessage = (msg) => {
+    if (msg.type !== "battle") return;
+    const battle = msg.battle;
+    if (battle.phase === "question" && battle.question) seen.add(battle.question.id);
+    if (battle.phase === "break" || battle.phase === "finished") rounds.add(battle.round);
+    if (battle.phase === "finished") {
+      finishedSeen = true;
+      resolveFinished();
+    }
+  };
+
+  for (const bot of bots) {
+    const answered = new Set<string>();
+    bot.onMessage = (msg) => {
+      if (msg.type === "answer.ack") {
+        if (msg.clientTs != null) sample.answer.push(Date.now() - msg.clientTs);
+        if (!msg.ack.duplicate) bot.score = msg.ack.totalScore;
+      } else if (msg.type === "error") {
+        sample.errors += 1;
+      } else if (msg.type === "battle" && msg.battle.phase === "question" && msg.battle.question) {
+        const question = msg.battle.question;
+        if (answered.has(question.id)) return;
+        answered.add(question.id);
+        const choice = question.choices[Math.floor(random() * question.choices.length)];
+        sample.ops += 1;
+        bot.send({
+          type: "answer",
+          questionId: question.id,
+          choiceId: choice.id,
+          clientMsgId: `g-${question.id}-${bot.deviceId}`,
+          clientTs: Date.now(),
+        });
+      }
+    };
+  }
+
+  const planned = config.roundPlan.reduce((sum, spec) => sum + (spec.count ?? config.battle.questionsPerRound), 0);
+  return {
+    finished,
+    stats: () => ({
+      questionsPlayed: seen.size,
+      questionsPlanned: planned,
+      roundsCompleted: rounds.size,
+      roundsTotal: config.battle.rounds,
+      finished: finishedSeen,
+    }),
+    detach: () => {
+      host.onMessage = null;
+      for (const bot of bots) bot.onMessage = null;
+    },
+  };
+}
+
 async function scenario(clients: number, target: Target): Promise<Sample> {
   const sample: Sample = { join: [], answer: [], board: [], errors: 0, ops: 0, mismatches: 0, clients };
   const watchdog = setTimeout(() => {
     writeSync(2, `watchdog stuck in ${phase}\n`);
     process.exit(1);
-  }, target.remote ? 120000 : 45000);
+  }, FULL_GAME ? expectedGameMs() + 120000 : target.remote ? 120000 : 45000);
   mark(`host-${clients}`);
   const random = rnd(20261128 + clients);
   const host = new Bot(target.wsUrl, "host");
@@ -168,13 +265,27 @@ async function scenario(clients: number, target: Target): Promise<Sample> {
     }
 
     mark(`start-${clients}`);
+    const run = FULL_GAME ? attachFullGame(host, bots, sample, random) : null;
     host.send({ type: "host.start", token: welcome.token, clientTs: Date.now() });
     const battle = await bots[0].wait("battle", target.waitMs);
     if (battle.type !== "battle" || !battle.battle.question) throw new Error("question did not start");
     const questionId = battle.battle.question.id;
 
+    if (run) {
+      mark(`game-${clients}`);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, expectedGameMs());
+      });
+      await Promise.race([run.finished, timeout]);
+      clearTimeout(timer);
+      run.detach();
+      sample.game = run.stats();
+      if (!sample.game.finished) sample.errors += 1;
+    }
+
     mark(`answer-${clients}`);
-    await Promise.all(bots.map(async (bot, i) => {
+    if (!FULL_GAME) await Promise.all(bots.map(async (bot, i) => {
       if (random() < 0.15) {
         const before = bot.score;
         bot.close();
@@ -287,6 +398,12 @@ function report(sample: Sample): void {
   console.log(line("answer", sample.answer));
   console.log(line("board", sample.board));
   console.log(`errors ${sample.errors} / ops ${sample.ops}    score mismatches ${sample.mismatches}`);
+  if (sample.game) {
+    const g = sample.game;
+    console.log(
+      `game     questions ${g.questionsPlayed}/${g.questionsPlanned}  rounds ${g.roundsCompleted}/${g.roundsTotal}  finished ${g.finished ? "yes" : "no"}`,
+    );
+  }
 }
 
 let phase = "boot";
@@ -322,8 +439,10 @@ try {
       errors: sample.errors,
       ops: sample.ops,
       mismatches: sample.mismatches,
+      game: sample.game ?? null,
     });
-    if (sample.mismatches > 0 || errorRate > 0.01 || answerP95 > 500 || joinP95 > 500 || boardP95 > 500) {
+    const gameFailed = sample.game ? !sample.game.finished || sample.game.questionsPlayed < sample.game.questionsPlanned : false;
+    if (sample.mismatches > 0 || errorRate > 0.01 || answerP95 > 500 || joinP95 > 500 || boardP95 > 500 || gameFailed) {
       console.error("load test failed");
       console.log(JSON.stringify(results, null, 2));
       process.exitCode = 1;
