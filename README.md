@@ -8,6 +8,8 @@ Builders Live is a live multiplayer web app for a room full of people. Everyone 
 
 It was built for an AWS Student Builder Group meetup. Other community organizers can reuse it for their own non-commercial events.
 
+Off Campus code: `PXKN2X`
+
 Source-available, and open for non-commercial use. Commercial use is not permitted.
 
 ## What it is
@@ -20,6 +22,7 @@ Attendee features, in the order they appear:
 2. **Build Board.** One shared canvas. People drag AWS service tiles and connect them, with live cursors. The host can set a challenge, lock the board, or clear it.
 3. **Live Q&A.** People post questions and upvote. The top of the list rises live. The host can mark a question answered or hide it.
 4. **Builder Match.** People tick interests and get matched with 2 or 3 others in the room.
+5. **Room map.** An illustrative cafe layout for Starbucks Reserve, Jubilee Hills, Hyderabad. Tap a seat to check in and a named stick figure appears. Positions are self-reported and sync live, so someone opening the map from another city sees this Hyderabad room. The host sees table occupancy and can find a teammate by name. An optional Wi-Fi sensing demo runs client-side only and is labelled as demo, not a live Wi-Fi scan.
 
 ## License
 
@@ -66,15 +69,24 @@ Details are in [docs/teardown.md](docs/teardown.md).
 1. The projector (`/screen/<CODE>`) shows a QR code and the room code while teams fill.
 2. The phone opens `/join/<CODE>`.
 3. They type a display name and tap **I'm in**.
-4. They land in the room. The four features are on the bottom of the screen.
+4. They land in the room. The features are on the bottom of the screen.
 
 The session token stays in the browser. A reload or a Wi-Fi blip resumes the same player, team, and score. Answers use an id so a retry during reconnect counts once.
+
+## Room map
+
+- **Where it appears:** `/play/<CODE>` (Map tab), `/screen/<CODE>` (lobby), and `/host` (occupancy and find).
+- **Layout:** set in `content/event.json` under `roomMap`. It is an illustrative layout, not a surveyed floor plan.
+- **Check-in:** self-reported. One person per seat. You can move.
+- **Wi-Fi demo:** the optional toggle is client-side only. It is labelled "Demo, simulated data, not a live Wi-Fi scan".
+
+Off Campus code: `PXKN2X`
 
 ## Host guide
 
 Open `/host`, enter the host PIN, and create the room. The full walkthrough is [docs/host-guide.md](docs/host-guide.md).
 
-The dashboard is the admin view: scores, who is active, idle, or disconnected, progress through the round, and accuracy per player, per team, and per question. The attendee list is titled Players. From the same screen you start, pause, resume, and skip, kick a disruptive player, and optionally block that device for the session.
+The dashboard is the admin view: scores, who is active, idle, or disconnected, progress through the round, and accuracy per player, per team, and per question. The attendee list is titled Players. The dashboard also includes table occupancy and find-a-teammate. From the same screen you start, pause, resume, and skip, kick a disruptive player, and optionally block that device for the session.
 
 The host PIN is compared as a scrypt hash. The hash lives in SSM Parameter Store (SecureString, standard tier). Sessions are short-lived signed tokens. Login is throttled after repeated failures.
 
@@ -92,7 +104,7 @@ The host PIN is compared as a scrypt hash. The hash lives in SSM Parameter Store
 
 Edit two files, then deploy again (or restart local mode):
 
-- `content/event.json` — event name, teams, round plan, timings, room cap, tiles, challenges, interests
+- `content/event.json` — event name, teams, round plan, timings, room cap, tiles, challenges, interests, and the room map table layout
 - `content/questions.json` — the question bank
 
 Shipped defaults, sized for about 50 people with headroom above that:

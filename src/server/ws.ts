@@ -8,7 +8,7 @@ import type { ClientMessage } from "../shared/protocol.js";
 import { roomCodeOk } from "../shared/protocol.js";
 import { issueToken, readToken, verifySecret } from "../shared/tokens.js";
 import type { Features, RoomState } from "../shared/types.js";
-import { adminView, battleView, boardView, cursorsView, groupsView, lobbyView, playerView, qaView, screenView, standingsView, topQuestions } from "../shared/views.js";
+import { adminView, battleView, boardView, cursorsView, groupsView, lobbyView, mapView, playerView, qaView, screenView, standingsView, topQuestions } from "../shared/views.js";
 import {
   broadcastLock,
   createRoomItem,
@@ -235,6 +235,10 @@ async function commandFor(connectionId: string, msg: ClientMessage, signing: str
       return { type: "qa.upvote", playerId: await playerId(connectionId), questionId: msg.questionId };
     case "match.set":
       return { type: "match.set", playerId: await playerId(connectionId), interests: msg.interests };
+    case "map.sit":
+      return { type: "map.sit", playerId: await playerId(connectionId), seatId: msg.seatId, clientMsgId: msg.clientMsgId };
+    case "map.leave":
+      return { type: "map.leave", playerId: await playerId(connectionId), clientMsgId: msg.clientMsgId };
     case "host.lock":
       return { type: "host.lock", locked: msg.locked };
     case "host.mode":
@@ -292,7 +296,7 @@ async function mutate(roomCode: string, command: Command, connectionId: string, 
   // Fan-out / schedule after a successful deliver must not surface as a client error.
   try {
     if (result.scheduleAt) await schedule(roomCode, state.battle.generation, result.scheduleAt);
-    if (result.dirty.some((k) => k === "board" || k === "cursors" || k === "standings" || k === "lobby" || k === "qa" || k === "admin" || k === "match")) {
+    if (result.dirty.some((k) => k === "board" || k === "cursors" || k === "standings" || k === "lobby" || k === "qa" || k === "admin" || k === "match" || k === "map")) {
       await maybeFlush(roomCode);
     }
   } catch (err) {
@@ -358,6 +362,7 @@ export async function flush(roomCode: string): Promise<void> {
   await roomFanout(roomCode, { type: "qa", items: qaView(state, null, false), serverTs: now }, (c) => c.role !== "host");
   await roomFanout(roomCode, { type: "admin", admin: adminView(state, env, now, features), serverTs: now }, (c) => c.role === "host");
   await roomFanout(roomCode, { type: "match", yours: null, groups: groupsView(state, null), serverTs: now }, (c) => c.role === "host" || c.role === "screen");
+  await roomFanout(roomCode, { type: "map", seats: mapView(state, config).seats, serverTs: now }, (c) => c.role === "host" || c.role === "screen" || c.role === "player");
 }
 
 async function schedule(roomCode: string, generation: number, at: number): Promise<void> {

@@ -134,6 +134,19 @@ export interface PlayerSelf {
   status: Presence;
 }
 
+export interface PublicSeat {
+  playerId: string;
+  name: string;
+  teamId: string;
+  teamColor: string;
+  tableId: string;
+  seatId: string;
+}
+
+export interface PublicRoomMap {
+  seats: PublicSeat[];
+}
+
 export interface PlayerView {
   you: PlayerSelf;
   screenMode: ScreenMode;
@@ -144,6 +157,7 @@ export interface PlayerView {
   qa: PublicQa[];
   interests: string[];
   yourGroup: PublicGroup | null;
+  map: PublicRoomMap;
   features: Features;
   version: number;
 }
@@ -160,6 +174,7 @@ export interface ScreenView {
   cursors: PublicCursor[];
   qa: PublicQa[];
   groups: PublicGroup[];
+  map: PublicRoomMap;
   features: Features;
   version: number;
 }
@@ -213,6 +228,7 @@ export interface AdminView {
   board: PublicBoard;
   qa: PublicQa[];
   groups: PublicGroup[];
+  map: PublicRoomMap;
   features: Features;
   version: number;
 }
@@ -261,7 +277,9 @@ export type ClientMessage =
   | { type: "board.cursor"; x: number; y: number; clientMsgId?: string; clientTs?: number }
   | { type: "qa.post"; text: string; clientMsgId: string; clientTs?: number }
   | { type: "qa.upvote"; questionId: string; clientTs?: number }
-  | { type: "match.set"; interests: string[]; clientTs?: number };
+  | { type: "match.set"; interests: string[]; clientTs?: number }
+  | { type: "map.sit"; seatId: string; clientMsgId: string; clientTs?: number }
+  | { type: "map.leave"; clientMsgId: string; clientTs?: number };
 
 export type ServerMessage =
   | { type: "pong"; clientTs: number; serverTs: number; version: number }
@@ -280,6 +298,7 @@ export type ServerMessage =
   | { type: "cursors"; cursors: PublicCursor[]; serverTs: number }
   | { type: "qa"; items: PublicQa[]; serverTs: number }
   | { type: "match"; yours: PublicGroup | null; groups?: PublicGroup[]; serverTs: number }
+  | { type: "map"; seats: PublicSeat[]; serverTs: number }
   | { type: "lobby"; lobby: LobbyView; serverTs: number }
   | { type: "admin"; admin: AdminView; serverTs: number; clientTs?: number }
   | { type: "summary"; text: string; serverTs: number };

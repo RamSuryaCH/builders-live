@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { loadConfig } from "@shared/event-config";
 import type { AdminView, ScreenMode, ServerMessage } from "@shared/protocol";
 import { Qr } from "../components/Qr";
+import { RoomMap, matchesQuery } from "../components/RoomMap";
 import { go, tap } from "../haptics";
 import { LiveSocket, wsUrl } from "../net";
 
@@ -24,6 +25,7 @@ export function Host({ eventName }: { eventName: string }) {
   const [challenge, setChallenge] = useState(event.board.challenges[0]?.id ?? "");
   const [existing, setExisting] = useState("");
   const [status, setStatus] = useState("connecting");
+  const [find, setFind] = useState("");
   const sock = useRef<LiveSocket | null>(null);
   const tokenRef = useRef(token);
   const roomRef = useRef(room);
@@ -51,6 +53,8 @@ export function Host({ eventName }: { eventName: string }) {
           setAdmin(msg.state as AdminView);
         } else if (msg.type === "admin") {
           setAdmin(msg.admin);
+        } else if (msg.type === "map") {
+          setAdmin((v) => (v ? { ...v, map: { seats: msg.seats } } : v));
         } else if (msg.type === "error") {
           setError(msg.message);
           if (msg.code === "unauthorized") {
@@ -198,6 +202,36 @@ export function Host({ eventName }: { eventName: string }) {
             </section>
           </div>
           <div className="host-grid">
+            <section className="host-card">
+              <h2>Room map</h2>
+              <RoomMap seats={admin?.map.seats ?? []} variant="host" showFind findValue={find} onFindChange={setFind} />
+              <div className="table-list">
+                {event.roomMap.tables.map((table) => {
+                  const people = (admin?.map.seats ?? []).filter((s) => s.tableId === table.id);
+                  return (
+                    <div key={table.id} className="table-row">
+                      <div className="table-head">
+                        <strong>{table.label}</strong>
+                        <span>{people.length}/{table.seats.length}</span>
+                      </div>
+                      <div className="table-names">
+                        {people.length === 0 && <span className="acc">Empty</span>}
+                        {people.map((person) => {
+                          const hit = matchesQuery(person.name, find);
+                          return (
+                            <span key={person.playerId} className={`name-pill${hit ? " is-match" : ""}`}>
+                              <i style={{ background: person.teamColor }} />
+                              {person.name}
+                              {hit && <em>Match</em>}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
             <section className="stats">
               <div className="stat"><b>{admin?.counts.active ?? 0}</b><span>Active</span></div>
               <div className="stat"><b>{admin?.counts.idle ?? 0}</b><span>Idle</span></div>

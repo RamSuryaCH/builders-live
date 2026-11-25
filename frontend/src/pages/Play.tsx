@@ -4,18 +4,20 @@ import { battleLabels } from "@shared/labels";
 import type { PlayerView, PublicBattle, PublicCursor, PublicGroup, PublicQa, ServerMessage, Standings } from "@shared/protocol";
 import { BoardView } from "../components/Board";
 import { Ring, useNow } from "../components/Ring";
+import { RoomMap } from "../components/RoomMap";
 import { deviceId, go, tap } from "../haptics";
 import { LiveSocket, wsUrl } from "../net";
 import { clearSession, loadSession } from "../session";
 
 const event = loadConfig();
-type Tab = "battle" | "board" | "qa" | "match";
+type Tab = "battle" | "board" | "qa" | "match" | "map";
 
 const tabs: { id: Tab; label: string }[] = [
   { id: "battle", label: "Team Battle" },
   { id: "board", label: "Build Board" },
   { id: "qa", label: "Live Q&A" },
   { id: "match", label: "Builder Match" },
+  { id: "map", label: "Map" },
 ];
 
 export function Play({ code }: { code: string }) {
@@ -79,6 +81,8 @@ export function Play({ code }: { code: string }) {
       setView((v) => (v ? { ...v, qa: msg.items } : v));
     } else if (msg.type === "match") {
       setView((v) => (v ? { ...v, yourGroup: msg.yours } : v));
+    } else if (msg.type === "map") {
+      setView((v) => (v ? { ...v, map: { seats: msg.seats } } : v));
     } else if (msg.type === "answer.ack") {
       setPending(msg.ack.choiceId);
       setView((v) => {
@@ -197,6 +201,16 @@ export function Play({ code }: { code: string }) {
               tap();
               sock.current?.send({ type: "match.set", interests: picks, clientTs: Date.now() });
             }}
+          />
+        )}
+        {view && tab === "map" && (
+          <RoomMap
+            seats={view.map.seats}
+            youId={view.you.id}
+            interactive
+            showFind
+            onSit={(seatId) => sock.current?.send({ type: "map.sit", seatId, clientMsgId: crypto.randomUUID(), clientTs: Date.now() })}
+            onLeave={() => sock.current?.send({ type: "map.leave", clientMsgId: crypto.randomUUID(), clientTs: Date.now() })}
           />
         )}
       </section>
@@ -357,6 +371,7 @@ function Icon({ name }: { name: Tab }) {
   const common = { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2 };
   if (name === "battle") return <svg {...common}><path d="M5 19h14M7 16l5-12 5 12" /></svg>;
   if (name === "board") return <svg {...common}><rect x="4" y="4" width="7" height="7" /><rect x="13" y="13" width="7" height="7" /><path d="M11 8h2v8h-2M8 11v2h8v-2" /></svg>;
+  if (name === "map") return <svg {...common}><rect x="7.5" y="8.5" width="9" height="7" rx="1.5" /><circle cx="12" cy="4.5" r="1.4" /><circle cx="12" cy="19.5" r="1.4" /><circle cx="4.5" cy="12" r="1.4" /><circle cx="19.5" cy="12" r="1.4" /></svg>;
   if (name === "qa") return <svg {...common}><path d="M5 6h14v9H8l-3 3V6z" /></svg>;
   return <svg {...common}><circle cx="8" cy="9" r="2" /><circle cx="16" cy="9" r="2" /><path d="M4 18c1-3 3-4 4-4s3 1 4 4M12 18c1-3 3-4 4-4s3 1 4 4" /></svg>;
 }

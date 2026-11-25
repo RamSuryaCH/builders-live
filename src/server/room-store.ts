@@ -171,7 +171,12 @@ export class RoomStore {
       } else if (sk.startsWith("PLAYER#")) {
         const player = item.player as Player;
         if (player?.id) {
-          players[player.id] = { ...player, answers: {}, buckets: player.buckets ?? freshBuckets() };
+          players[player.id] = {
+            ...player,
+            answers: {},
+            buckets: player.buckets ?? freshBuckets(),
+            seatId: player.seatId ?? null,
+          };
         }
       } else if (sk.startsWith("ANSWER#")) {
         const answer = item.answer as AnswerRecord;
@@ -242,6 +247,9 @@ export class RoomStore {
         return this.qa(code, cmd, now, env);
       case "match.set":
         return this.matchSet(code, cmd.playerId, cmd.interests, now, env);
+      case "map.sit":
+      case "map.leave":
+        return this.hostMutate(code, cmd, now, env);
       default:
         return this.hostMutate(code, cmd, now, env);
     }
@@ -328,6 +336,7 @@ export class RoomStore {
         lastAction: now,
         joinedAt: now,
         kicked: false,
+        seatId: null,
         answers: {},
         buckets: freshBuckets(),
         version: 1,

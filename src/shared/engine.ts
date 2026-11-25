@@ -33,6 +33,8 @@ export type Command =
   | { type: "qa.post"; playerId: string; text: string; clientMsgId: string }
   | { type: "qa.upvote"; playerId: string; questionId: string }
   | { type: "match.set"; playerId: string; interests: string[] }
+  | { type: "map.sit"; playerId: string; seatId: string; clientMsgId: string }
+  | { type: "map.leave"; playerId: string; clientMsgId: string }
   | { type: "host.lock"; locked: boolean }
   | { type: "host.mode"; mode: ScreenMode }
   | { type: "host.reset" }
@@ -60,7 +62,7 @@ export interface AnswerAck {
   totalScore: number;
 }
 
-export type DirtyKey = "standings" | "board" | "cursors" | "qa" | "match" | "lobby" | "admin";
+export type DirtyKey = "standings" | "board" | "cursors" | "qa" | "match" | "map" | "lobby" | "admin";
 
 export interface ApplyResult {
   ok: boolean;
@@ -144,6 +146,14 @@ function freshBuckets() {
 
 export function roster(state: RoomState): Player[] {
   return Object.values(state.players).filter((p) => !p.kicked);
+}
+
+/** Looks up a seat id in the venue layout. Returns the table that owns it, or null when unknown. */
+export function findSeat(config: EventConfig, seatId: string): { tableId: string } | null {
+  for (const table of config.roomMap.tables) {
+    if (table.seats.some((seat) => seat.id === seatId)) return { tableId: table.id };
+  }
+  return null;
 }
 
 function bump(state: RoomState, playerIds: string[] = []): void {
@@ -381,6 +391,7 @@ export function apply(state: RoomState, cmd: Command, now: number, env: EngineEn
         lastAction: now,
         joinedAt: now,
         kicked: false,
+        seatId: null,
         answers: {},
         buckets: freshBuckets(),
         version: 1,
@@ -604,6 +615,36 @@ export function apply(state: RoomState, cmd: Command, now: number, env: EngineEn
       bump(state);
       return ok({ dirty: ["match", "admin"] });
     }
+    case "map.sit": {
+      const found = playerOrFail(state, cmd.playerId);
+      if (!("id" in found)) return found;
+      const player = found;
+      if (!findSeat(env.config, cmd.seatId)) return fail("bad_seat", "That seat is not on the map.", cmd.clientMsgId);
+      if (player.seatId === cmd.seatId) {
+        return ok({ dirty: ["map", "admin"], clientMsgId: cmd.clientMsgId });
+      }
+      if (roster(state).some((p) => p.seatId === cmd.seatId)) {
+        return fail("seat_taken", "That seat is taken.", cmd.clientMsgId);
+      }
+      player.seatId = cmd.seatId;
+      touch(player, now);
+      player.version += 1;
+      bump(state);
+      return ok({ dirty: ["map", "admin"], clientMsgId: cmd.clientMsgId });
+    }
+    case "map.leave": {
+      const found = playerOrFail(state, cmd.playerId);
+      if (!("id" in found)) return found;
+      const player = found;
+      if (player.seatId == null) {
+        return ok({ dirty: ["map", "admin"], clientMsgId: cmd.clientMsgId });
+      }
+      player.seatId = null;
+      touch(player, now);
+      player.version += 1;
+      bump(state);
+      return ok({ dirty: ["map", "admin"], clientMsgId: cmd.clientMsgId });
+    }
     case "host.lock": {
       state.locked = cmd.locked;
       bump(state);
@@ -698,8 +739,10 @@ export function apply(state: RoomState, cmd: Command, now: number, env: EngineEn
     case "host.kick": {
       const player = state.players[cmd.playerId];
       if (!player || player.kicked) return fail("missing", "That player is not in the room.");
+      const hadSeat = player.seatId != null;
       player.kicked = true;
       player.connected = false;
+      player.seatId = null;
       player.version += 1;
       delete state.board.cursors[player.id];
       if (cmd.block && !state.blockedDeviceIds.includes(player.deviceId)) {
@@ -715,7 +758,7 @@ export function apply(state: RoomState, cmd: Command, now: number, env: EngineEn
             ? "The host removed you and blocked this device for the session."
             : "The host removed you from the room.",
         },
-        dirty: ["lobby", "standings", "admin", "match", "cursors"],
+        dirty: ["lobby", "standings", "admin", "match", "cursors", ...(hadSeat ? (["map"] as DirtyKey[]) : [])],
       });
     }
     case "host.board.clear": {

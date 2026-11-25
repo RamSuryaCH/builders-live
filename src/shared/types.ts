@@ -36,6 +36,29 @@ export interface ChallengeConfig {
   text: string;
 }
 
+export interface RoomMapSeatConfig {
+  id: string;
+  dx: number;
+  dy: number;
+}
+
+export interface RoomMapTableConfig {
+  id: string;
+  label: string;
+  x: number;
+  y: number;
+  seats: RoomMapSeatConfig[];
+}
+
+export interface RoomMapConfig {
+  venueName: string;
+  city: string;
+  badge: string;
+  selfReportedLabel: string;
+  demoBadge: string;
+  tables: RoomMapTableConfig[];
+}
+
 export interface EventConfig {
   eventName: string;
   groupName: string;
@@ -66,6 +89,7 @@ export interface EventConfig {
     tiles: TileConfig[];
     challenges: ChallengeConfig[];
   };
+  roomMap: RoomMapConfig;
   qa: {
     maxQuestionLength: number;
     rateLimitPerMin: number;
@@ -127,6 +151,7 @@ export interface Player {
   lastAction: number;
   joinedAt: number;
   kicked: boolean;
+  seatId: string | null;
   answers: Record<string, AnswerRecord>;
   buckets: { board: Bucket; qa: Bucket; cursor: Bucket; vote: Bucket };
   version: number;

@@ -29,5 +29,31 @@ export function validateConfig(config: EventConfig): string[] {
   if (config.match.groupSizeMin < 2 || config.match.groupSizeMax < config.match.groupSizeMin) {
     errors.push("match group sizes are invalid");
   }
+  errors.push(...validateRoomMap(config));
+  return errors;
+}
+
+function validateRoomMap(config: EventConfig): string[] {
+  const errors: string[] = [];
+  const map = config.roomMap;
+  if (!map) return ["roomMap is required"];
+  if (!map.venueName?.trim()) errors.push("roomMap.venueName is required");
+  const tables = Array.isArray(map.tables) ? map.tables : [];
+  if (tables.length < 1) errors.push("roomMap needs at least 1 table");
+  const tableIds = new Set<string>();
+  const seatIds = new Set<string>();
+  for (const table of tables) {
+    if (tableIds.has(table.id)) errors.push(`duplicate table id ${table.id}`);
+    tableIds.add(table.id);
+    if (!(table.x >= 0 && table.x <= 100 && table.y >= 0 && table.y <= 100)) {
+      errors.push(`table ${table.id} x and y must be between 0 and 100`);
+    }
+    const seats = Array.isArray(table.seats) ? table.seats : [];
+    if (seats.length < 4 || seats.length > 6) errors.push(`table ${table.id} needs 4 to 6 seats`);
+    for (const seat of seats) {
+      if (seatIds.has(seat.id)) errors.push(`duplicate seat id ${seat.id}`);
+      seatIds.add(seat.id);
+    }
+  }
   return errors;
 }

@@ -76,6 +76,96 @@
       { "id": "multiplayer", "text": "Build a multiplayer game backend" }
     ]
   },
+  "roomMap": {
+    "venueName": "Starbucks Reserve, Jubilee Hills",
+    "city": "Hyderabad",
+    "badge": "Illustrative layout",
+    "selfReportedLabel": "Self-reported",
+    "demoBadge": "Demo, simulated data, not a live Wi-Fi scan",
+    "tables": [
+      {
+        "id": "w1", "label": "Window 1", "x": 14, "y": 18,
+        "seats": [
+          { "id": "w1-a", "dx": 0, "dy": -9 },
+          { "id": "w1-b", "dx": 9, "dy": 0 },
+          { "id": "w1-c", "dx": 0, "dy": 9 },
+          { "id": "w1-d", "dx": -9, "dy": 0 }
+        ]
+      },
+      {
+        "id": "w2", "label": "Window 2", "x": 42, "y": 18,
+        "seats": [
+          { "id": "w2-a", "dx": 0, "dy": -9 },
+          { "id": "w2-b", "dx": 9, "dy": -3 },
+          { "id": "w2-c", "dx": 5, "dy": 7 },
+          { "id": "w2-d", "dx": -5, "dy": 7 },
+          { "id": "w2-e", "dx": -9, "dy": -3 }
+        ]
+      },
+      {
+        "id": "w3", "label": "Window 3", "x": 70, "y": 18,
+        "seats": [
+          { "id": "w3-a", "dx": 0, "dy": -9 },
+          { "id": "w3-b", "dx": 9, "dy": 0 },
+          { "id": "w3-c", "dx": 0, "dy": 9 },
+          { "id": "w3-d", "dx": -9, "dy": 0 }
+        ]
+      },
+      {
+        "id": "c1", "label": "Counter 1", "x": 88, "y": 44,
+        "seats": [
+          { "id": "c1-a", "dx": 0, "dy": -9 },
+          { "id": "c1-b", "dx": 9, "dy": -3 },
+          { "id": "c1-c", "dx": 5, "dy": 7 },
+          { "id": "c1-d", "dx": -5, "dy": 7 },
+          { "id": "c1-e", "dx": -9, "dy": -3 }
+        ]
+      },
+      {
+        "id": "c2", "label": "Counter 2", "x": 88, "y": 74,
+        "seats": [
+          { "id": "c2-a", "dx": 0, "dy": -9 },
+          { "id": "c2-b", "dx": 9, "dy": -3 },
+          { "id": "c2-c", "dx": 5, "dy": 7 },
+          { "id": "c2-d", "dx": -5, "dy": 7 },
+          { "id": "c2-e", "dx": -9, "dy": -3 }
+        ]
+      },
+      {
+        "id": "f1", "label": "Floor 1", "x": 30, "y": 50,
+        "seats": [
+          { "id": "f1-a", "dx": 0, "dy": -9 },
+          { "id": "f1-b", "dx": 8, "dy": -5 },
+          { "id": "f1-c", "dx": 8, "dy": 5 },
+          { "id": "f1-d", "dx": 0, "dy": 9 },
+          { "id": "f1-e", "dx": -8, "dy": 5 },
+          { "id": "f1-f", "dx": -8, "dy": -5 }
+        ]
+      },
+      {
+        "id": "f2", "label": "Floor 2", "x": 60, "y": 52,
+        "seats": [
+          { "id": "f2-a", "dx": 0, "dy": -9 },
+          { "id": "f2-b", "dx": 8, "dy": -5 },
+          { "id": "f2-c", "dx": 8, "dy": 5 },
+          { "id": "f2-d", "dx": 0, "dy": 9 },
+          { "id": "f2-e", "dx": -8, "dy": 5 },
+          { "id": "f2-f", "dx": -8, "dy": -5 }
+        ]
+      },
+      {
+        "id": "f3", "label": "Floor 3", "x": 34, "y": 80,
+        "seats": [
+          { "id": "f3-a", "dx": 0, "dy": -9 },
+          { "id": "f3-b", "dx": 8, "dy": -5 },
+          { "id": "f3-c", "dx": 8, "dy": 5 },
+          { "id": "f3-d", "dx": 0, "dy": 9 },
+          { "id": "f3-e", "dx": -8, "dy": 5 },
+          { "id": "f3-f", "dx": -8, "dy": -5 }
+        ]
+      }
+    ]
+  },
   "qa": {
     "maxQuestionLength": 200,
     "rateLimitPerMin": 4
