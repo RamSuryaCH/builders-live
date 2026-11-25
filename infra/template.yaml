@@ -166,6 +166,9 @@ Resources:
     DependsOn: TimerLogGroup
     Properties:
       FunctionName: !Sub ${AWS::StackName}-timer
+      # The timer chains Lambda -> SQS -> Lambda once per game step (about 60 hops a game).
+      # The chain ends when the game ends, so allow it past Lambda's 16-hop loop stop.
+      RecursiveLoop: Allow
       CodeUri: ../dist-lambda/timer/
       Tags:
         project: builders-live
@@ -407,6 +410,15 @@ Resources:
           Unit: USD
         TimeUnit: MONTHLY
         BudgetType: COST
+        # Count only the services this stack uses, not the whole account.
+        CostFilters:
+          Service:
+            - AWS Lambda
+            - Amazon API Gateway
+            - Amazon DynamoDB
+            - Amazon Simple Queue Service
+            - Amazon CloudFront
+            - AWS Systems Manager
       NotificationsWithSubscribers:
         - Notification:
             NotificationType: ACTUAL
