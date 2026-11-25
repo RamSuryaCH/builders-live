@@ -90,8 +90,14 @@ SITE="https://${DOMAIN}"
 
 PUBLIC_BASE_URL="$SITE" VITE_WS_URL="$WS" npm run build:web
 # Hashed bundles can be cached forever. HTML and SPA entry points must revalidate.
+# favicon.ico is a 32x32 PNG (see scripts/render-brand.mjs); set the type so it is not served as image/vnd.microsoft.icon.
 aws s3 sync frontend/dist "s3://${BUCKET}" --delete \
   --exclude "assets/*" \
+  --exclude "favicon.ico" \
+  --cache-control "no-cache" \
+  --region ap-southeast-2
+aws s3 cp frontend/dist/favicon.ico "s3://${BUCKET}/favicon.ico" \
+  --content-type "image/png" \
   --cache-control "no-cache" \
   --region ap-southeast-2
 aws s3 sync frontend/dist/assets "s3://${BUCKET}/assets" \

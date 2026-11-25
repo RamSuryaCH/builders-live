@@ -27,4 +27,7 @@ test("the SAM template stays serverless, cheap, and in Sydney", async () => {
   assert.match(deploy, /--tags project=builders-live/);
   assert.match(deploy, /max-age=31536000, immutable/);
   assert.match(deploy, /cache-control "no-cache"/);
+  assert.match(deploy, /favicon\.ico[\s\S]*content-type "image\/png"/);
+  assert.match(yaml, /RecursiveLoop: Allow/);
+  assert.match(yaml, /CostFilters:/);
 });
