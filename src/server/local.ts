@@ -20,6 +20,7 @@ import {
   cursorsView,
   groupsView,
   lobbyView,
+  mapView,
   playerView,
   qaView,
   screenView,
@@ -262,6 +263,15 @@ export async function startLocalServer(opts: LocalOptions = {}): Promise<Running
           send(ws, { type: "match", yours: null, groups: groupsView(room.state, null), serverTs: now });
         }
       }
+    }
+    if (room.dirty.has("map")) {
+      room.dirty.delete("map");
+      const seats = mapView(room.state, config).seats;
+      broadcast(
+        room,
+        { type: "map", seats, serverTs: now },
+        (m) => m.role === "host" || m.role === "screen" || m.role === "player",
+      );
     }
     if (room.dirty.has("admin") && now - room.lastAdmin >= 400) {
       room.lastAdmin = now;
@@ -681,6 +691,10 @@ function playerCommand(msg: ClientMessage, playerId: string): Command | null {
       return { type: "qa.upvote", playerId, questionId: msg.questionId };
     case "match.set":
       return { type: "match.set", playerId, interests: msg.interests };
+    case "map.sit":
+      return { type: "map.sit", playerId, seatId: msg.seatId, clientMsgId: msg.clientMsgId };
+    case "map.leave":
+      return { type: "map.leave", playerId, clientMsgId: msg.clientMsgId };
     default:
       return null;
   }

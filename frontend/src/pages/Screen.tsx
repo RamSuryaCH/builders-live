@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { battleLabels } from "@shared/labels";
-import type { LobbyView, PublicBattle, PublicBoard, PublicCursor, PublicGroup, PublicQa, ScreenView, ServerMessage, Standings } from "@shared/protocol";
+import type { LobbyView, PublicBattle, PublicBoard, PublicCursor, PublicGroup, PublicQa, PublicSeat, ScreenView, ServerMessage, Standings } from "@shared/protocol";
 import { BoardView } from "../components/Board";
 import { Qr } from "../components/Qr";
 import { Ring, useNow } from "../components/Ring";
+import { RoomMap } from "../components/RoomMap";
 import { LiveSocket, wsUrl } from "../net";
 
 export function Screen({ code, eventName }: { code: string; eventName: string }) {
@@ -25,6 +26,7 @@ export function Screen({ code, eventName }: { code: string; eventName: string })
         else if (msg.type === "board") setView((v) => (v ? { ...v, board: msg.board } : v));
         else if (msg.type === "cursors") setView((v) => (v ? { ...v, cursors: msg.cursors } : v));
         else if (msg.type === "qa") setView((v) => (v ? { ...v, qa: msg.items } : v));
+        else if (msg.type === "map") setView((v) => (v ? { ...v, map: { seats: msg.seats } } : v));
         else if (msg.type === "match" && msg.groups) setView((v) => (v ? { ...v, groups: msg.groups ?? [] } : v));
       },
     });
@@ -50,7 +52,7 @@ export function Screen({ code, eventName }: { code: string; eventName: string })
 
   return (
     <main className="screen">
-      {view.screenMode === "lobby" && <Lobby eventName={eventName} code={code} joinUrl={joinUrl} lobby={view.lobby} />}
+      {view.screenMode === "lobby" && <Lobby eventName={eventName} code={code} joinUrl={joinUrl} lobby={view.lobby} seats={view.map.seats} />}
       {view.screenMode === "battle" && <BattleWall battle={view.battle} standings={view.standings} now={synced} />}
       {view.screenMode === "board" && <BoardWall board={view.board} cursors={view.cursors} />}
       {view.screenMode === "qa" && <QaWall items={view.qa} />}
@@ -59,7 +61,7 @@ export function Screen({ code, eventName }: { code: string; eventName: string })
   );
 }
 
-function Lobby({ eventName, code, joinUrl, lobby }: { eventName: string; code: string; joinUrl: string; lobby: LobbyView }) {
+function Lobby({ eventName, code, joinUrl, lobby, seats }: { eventName: string; code: string; joinUrl: string; lobby: LobbyView; seats: PublicSeat[] }) {
   return (
     <div className="lobby-layout">
       <div>
@@ -78,6 +80,9 @@ function Lobby({ eventName, code, joinUrl, lobby }: { eventName: string; code: s
               ))}
             </section>
           ))}
+        </div>
+        <div className="lobby-map">
+          <RoomMap seats={seats} variant="screen" />
         </div>
       </div>
       <aside className="lobby-qr">

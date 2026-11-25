@@ -8,7 +8,7 @@ import { loadQuestions, validateQuestions } from "../src/shared/questions.js";
 import { pointsFor, pickTeam } from "../src/shared/scoring.js";
 import { LoginThrottle } from "../src/shared/throttle.js";
 import { hashSecret, issueToken, readToken, verifySecret } from "../src/shared/tokens.js";
-import { battleView, playerView, screenView } from "../src/shared/views.js";
+import { adminView, battleView, playerView, screenView } from "../src/shared/views.js";
 
 const config = loadConfig();
 const questions = loadQuestions();
@@ -37,6 +37,12 @@ test("shipped event defaults match the meetup brief", () => {
   assert.equal(rounds[2].questionIds.length, 6);
   assert.equal(rounds[2].questionIds[0], "q13");
   assert.equal(rounds[2].questionIds[5], "q18");
+  assert.equal(config.roomMap.venueName, "Starbucks Reserve, Jubilee Hills");
+  assert.equal(config.roomMap.city, "Hyderabad");
+  assert.equal(config.roomMap.tables.length, 8);
+  for (const table of config.roomMap.tables) {
+    assert.ok(table.seats.length >= 4 && table.seats.length <= 6, `${table.id} has ${table.seats.length} seats`);
+  }
   for (const q of questions) {
     assert.equal(q.choices.length, 4);
     assert.ok(q.explanation.length > 20);
@@ -282,4 +288,92 @@ test("host can return the projector to the lobby", () => {
   assert.equal(back.modeChanged, true);
   assert.equal(state.screenMode, "lobby");
   assert.equal(screenView(state, env, now, features).lobby.joined, 1);
+});
+
+test("map seats: sit, move frees the old seat, conflicts, bad ids, and leave", () => {
+  const now = 1_700_000_000_000;
+  const state = createRoom("ABCDEF", now);
+  const a = join(state, "Ada", "dev-a", now);
+  const b = join(state, "Bo", "dev-b", now);
+  assert.equal(state.players[a].seatId, null);
+
+  const sat = apply(state, { type: "map.sit", playerId: a, seatId: "w1-a", clientMsgId: "s1" }, now, env);
+  assert.equal(sat.ok, true);
+  assert.equal(sat.clientMsgId, "s1");
+  assert.ok(sat.dirty.includes("map") && sat.dirty.includes("admin"));
+  assert.equal(state.players[a].seatId, "w1-a");
+
+  const repeat = apply(state, { type: "map.sit", playerId: a, seatId: "w1-a", clientMsgId: "s1b" }, now, env);
+  assert.equal(repeat.ok, true);
+  assert.equal(repeat.clientMsgId, "s1b");
+  assert.equal(state.players[a].seatId, "w1-a");
+
+  const moved = apply(state, { type: "map.sit", playerId: a, seatId: "w1-b", clientMsgId: "s2" }, now, env);
+  assert.equal(moved.ok, true);
+  assert.equal(state.players[a].seatId, "w1-b");
+
+  const taken = apply(state, { type: "map.sit", playerId: b, seatId: "w1-b", clientMsgId: "s3" }, now, env);
+  assert.equal(taken.ok, false);
+  assert.equal(taken.error?.code, "seat_taken");
+  assert.equal(taken.error?.message, "That seat is taken.");
+  assert.equal(taken.error?.clientMsgId, "s3");
+  assert.equal(state.players[a].seatId, "w1-b");
+  assert.equal(state.players[b].seatId, null);
+
+  const freed = apply(state, { type: "map.sit", playerId: b, seatId: "w1-a", clientMsgId: "s4" }, now, env);
+  assert.equal(freed.ok, true);
+  assert.equal(state.players[b].seatId, "w1-a");
+
+  const bogus = apply(state, { type: "map.sit", playerId: a, seatId: "nowhere-9", clientMsgId: "s5" }, now, env);
+  assert.equal(bogus.ok, false);
+  assert.equal(bogus.error?.code, "bad_seat");
+  assert.equal(state.players[a].seatId, "w1-b");
+
+  const left = apply(state, { type: "map.leave", playerId: a, clientMsgId: "l1" }, now, env);
+  assert.equal(left.ok, true);
+  assert.equal(left.clientMsgId, "l1");
+  assert.equal(state.players[a].seatId, null);
+  const standing = apply(state, { type: "map.leave", playerId: a, clientMsgId: "l2" }, now, env);
+  assert.equal(standing.ok, true);
+  assert.equal(state.players[a].seatId, null);
+});
+
+test("kick frees the seat, disconnect keeps it, and reset keeps it", () => {
+  const now = 1_700_000_000_000;
+  const state = createRoom("ABCDEF", now);
+  const a = join(state, "Cy", "dev-c", now);
+  const b = join(state, "Di", "dev-d", now);
+  apply(state, { type: "map.sit", playerId: a, seatId: "w2-a", clientMsgId: "k1" }, now, env);
+
+  apply(state, { type: "disconnect", playerId: a }, now + 1, env);
+  assert.equal(state.players[a].seatId, "w2-a");
+
+  apply(state, { type: "host.reset" }, now + 2, env);
+  assert.equal(state.players[a].seatId, "w2-a");
+
+  const kicked = apply(state, { type: "host.kick", playerId: a, block: false }, now + 3, env);
+  assert.equal(kicked.ok, true);
+  assert.ok(kicked.dirty.includes("map"));
+  assert.equal(state.players[a].seatId, null);
+
+  const taken = apply(state, { type: "map.sit", playerId: b, seatId: "w2-a", clientMsgId: "k2" }, now + 4, env);
+  assert.equal(taken.ok, true);
+  assert.equal(state.players[b].seatId, "w2-a");
+});
+
+test("seated players appear on the player, screen, and admin views", () => {
+  const now = 1_700_000_000_000;
+  const state = createRoom("ABCDEF", now);
+  const a = join(state, "Ada", "dev-a", now);
+  apply(state, { type: "map.sit", playerId: a, seatId: "f1-a", clientMsgId: "v1" }, now, env);
+  const team = config.teams.find((t) => t.id === state.players[a].teamId)!;
+  const expected = { playerId: a, name: "Ada", teamId: team.id, teamColor: team.color, tableId: "f1", seatId: "f1-a" };
+
+  assert.deepEqual(playerView(state, env, a, now, features).map.seats, [expected]);
+  assert.deepEqual(screenView(state, env, now, features).map.seats, [expected]);
+  assert.deepEqual(adminView(state, env, now, features).map.seats, [expected]);
+
+  apply(state, { type: "map.leave", playerId: a, clientMsgId: "v2" }, now, env);
+  assert.deepEqual(screenView(state, env, now, features).map.seats, []);
+  assert.deepEqual(playerView(state, env, a, now, features).map.seats, []);
 });

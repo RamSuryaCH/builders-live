@@ -11,11 +11,13 @@ import type {
   PublicCursor,
   PublicGroup,
   PublicQa,
+  PublicRoomMap,
+  PublicSeat,
   ScreenView,
   Standings,
 } from "./protocol.js";
 import type { EventConfig, Features, Player, Presence, QuizQuestion, RoomState } from "./types.js";
-import { findQuestion, roster } from "./engine.js";
+import { findQuestion, findSeat, roster } from "./engine.js";
 import type { EngineEnv } from "./engine.js";
 
 function presence(player: Player, now: number, config: EventConfig): Presence {
@@ -155,6 +157,27 @@ export function groupsView(state: RoomState, viewerId: string | null): PublicGro
   }));
 }
 
+/** Occupied seats only. The table layout itself ships in content/event.json, so clients never receive it here. */
+export function mapView(state: RoomState, config: EventConfig): PublicRoomMap {
+  const seats: PublicSeat[] = [];
+  const people = roster(state).sort((a, b) => a.joinedAt - b.joinedAt);
+  for (const player of people) {
+    if (!player.seatId) continue;
+    const seat = findSeat(config, player.seatId);
+    if (!seat) continue;
+    const team = config.teams.find((t) => t.id === player.teamId);
+    seats.push({
+      playerId: player.id,
+      name: player.name,
+      teamId: player.teamId,
+      teamColor: team?.color ?? "#FF9900",
+      tableId: seat.tableId,
+      seatId: player.seatId,
+    });
+  }
+  return { seats };
+}
+
 export function playerView(state: RoomState, env: EngineEnv, playerId: string, now: number, features: Features): PlayerView {
   const player = state.players[playerId];
   const team = env.config.teams.find((t) => t.id === player.teamId)!;
@@ -177,6 +200,7 @@ export function playerView(state: RoomState, env: EngineEnv, playerId: string, n
     qa: qaView(state, playerId, false),
     interests: state.interests[playerId] ?? [],
     yourGroup: group,
+    map: mapView(state, env.config),
     features,
     version: state.version,
   };
@@ -195,6 +219,7 @@ export function screenView(state: RoomState, env: EngineEnv, now: number, featur
     cursors: cursorsView(state, now),
     qa: qaView(state, null, false).slice(0, 8),
     groups: groupsView(state, null),
+    map: mapView(state, env.config),
     features,
     version: state.version,
   };
@@ -287,6 +312,7 @@ export function adminView(state: RoomState, env: EngineEnv, now: number, feature
     board: boardView(state, config),
     qa: qaView(state, null, true),
     groups: groupsView(state, null),
+    map: mapView(state, config),
     features,
     version: state.version,
   };
