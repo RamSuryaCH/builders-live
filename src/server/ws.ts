@@ -4,7 +4,7 @@ import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { createRoom, type ApplyResult, type Command, type EngineEnv } from "../shared/engine.js";
 import { loadConfig } from "../shared/event-config.js";
 import { loadQuestions } from "../shared/questions.js";
-import type { ClientMessage } from "../shared/protocol.js";
+import type { ClientMessage, ServerMessage } from "../shared/protocol.js";
 import { roomCodeOk } from "../shared/protocol.js";
 import { issueToken, readToken, verifySecret } from "../shared/tokens.js";
 import type { Features, RoomState } from "../shared/types.js";
@@ -279,43 +279,103 @@ async function playerId(connectionId: string): Promise<string> {
   return String(got?.playerId ?? "");
 }
 
+/** A command gets its direct reply within this window. Past it the client gets busy, even if the write lands later. */
+const REPLY_DEADLINE_MS = 4000;
+
 async function mutate(roomCode: string, command: Command, connectionId: string, clientTs?: number): Promise<void> {
-  const result = await store.applyCommand(roomCode, command, Date.now(), env);
-  if (!result.ok) {
-    if (result.error) await post(connectionId, { type: "error", ...result.error, serverTs: Date.now() });
-    return;
-  }
-  const changed = result.phaseChanged || result.modeChanged || result.dirty.length > 0 || result.joined || result.answer || result.clientMsgId || result.kicked;
-  if (!changed) return;
-  const state = await loadRoom(roomCode);
-  if (!state) {
-    await post(connectionId, { type: "error", code: "room_not_found", message: "That room has ended.", serverTs: Date.now() });
-    return;
-  }
-  await deliver(roomCode, state, result, connectionId, clientTs);
-  // Fan-out / schedule after a successful deliver must not surface as a client error.
+  // Exactly one direct reply per command. Later attempts (a late success, a late error) are dropped.
+  let replied = false;
+  const reply = async (msg: ServerMessage): Promise<void> => {
+    if (replied) return;
+    replied = true;
+    await post(connectionId, msg);
+  };
+  const clientMsgId = "clientMsgId" in command ? command.clientMsgId : undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<"expired">((resolve) => {
+    timer = setTimeout(() => resolve("expired"), REPLY_DEADLINE_MS);
+  });
+  const work = applyAndReply(roomCode, command, connectionId, reply, clientTs).then(
+    (fanout) => ({ ok: true as const, fanout }),
+    (err: unknown) => ({ ok: false as const, err }),
+  );
   try {
-    if (result.scheduleAt) await schedule(roomCode, state.battle.generation, result.scheduleAt);
-    if (result.dirty.some((k) => k === "board" || k === "cursors" || k === "standings" || k === "lobby" || k === "qa" || k === "admin" || k === "match" || k === "map")) {
-      await maybeFlush(roomCode);
+    const outcome = await Promise.race([work, expired]);
+    if (outcome === "expired") {
+      if (!replied) {
+        console.error("command passed the reply deadline", { roomCode, type: command.type });
+        await reply({ type: "error", code: "busy", message: "The room is busy. Try again.", clientMsgId, serverTs: Date.now() });
+      }
+    } else if (!outcome.ok) {
+      console.error("command failed", { roomCode, type: command.type, err: outcome.err });
+      await reply({ type: "error", code: "server", message: "Something went wrong. Try again.", clientMsgId, serverTs: Date.now() });
     }
   } catch (err) {
-    console.error("post-success fanout failed", { roomCode, command: command.type, err });
+    console.error("failed to send command reply", { roomCode, type: command.type, err });
+  } finally {
+    clearTimeout(timer);
+  }
+
+  // Fan-out runs after the direct reply, even when the reply deadline already passed.
+  const settled = await work;
+  if (settled.ok) {
+    try {
+      await settled.fanout();
+    } catch (err) {
+      console.error("post-reply fanout failed", { roomCode, command: command.type, err });
+    }
   }
 }
 
-async function deliver(roomCode: string, state: RoomState, result: ApplyResult, connectionId: string, clientTs?: number): Promise<void> {
+/** Applies the command and sends its direct reply. Returns the fan-out to run once the reply is out. */
+async function applyAndReply(
+  roomCode: string,
+  command: Command,
+  connectionId: string,
+  reply: (msg: ServerMessage) => Promise<void>,
+  clientTs?: number,
+): Promise<() => Promise<void>> {
+  const none = async () => {};
+  const result = await store.applyCommand(roomCode, command, Date.now(), env);
+  if (!result.ok) {
+    if (result.error) await reply({ type: "error", ...result.error, serverTs: Date.now() });
+    return none;
+  }
+  const changed = result.phaseChanged || result.modeChanged || result.dirty.length > 0 || result.joined || result.answer || result.clientMsgId || result.kicked;
+  if (!changed) return none;
+  const state = await loadRoom(roomCode);
+  if (!state) {
+    await reply({ type: "error", code: "room_not_found", message: "That room has ended.", serverTs: Date.now() });
+    return none;
+  }
+  await replyTo(roomCode, state, result, connectionId, reply, clientTs);
+  return () => fanOut(roomCode, state, result);
+}
+
+async function replyTo(
+  roomCode: string,
+  state: RoomState,
+  result: ApplyResult,
+  connectionId: string,
+  reply: (msg: ServerMessage) => Promise<void>,
+  clientTs?: number,
+): Promise<void> {
   const now = Date.now();
   if (result.joined) {
     const player = state.players[result.joined.playerId];
     const secrets = await loadSecrets();
     const exp = now + config.sessionTtlHours * 3_600_000;
     const token = issueToken({ r: "p", exp, room: roomCode, pid: player.id, did: player.deviceId }, secrets.signing);
+    // The connection mapping is written even if the reply is dropped, so later commands from this socket still resolve.
     await putConnection(roomCode, connectionId, { role: "player", playerId: player.id, deviceId: player.deviceId });
-    await post(connectionId, { type: "welcome", token, playerId: player.id, roomCode, state: playerView(state, env, player.id, now, features), serverTs: now, clientTs });
+    await reply({ type: "welcome", token, playerId: player.id, roomCode, state: playerView(state, env, player.id, now, features), serverTs: now, clientTs });
   }
-  if (result.answer) await post(connectionId, { type: "answer.ack", ack: result.answer, serverTs: now, clientTs });
-  else if (result.clientMsgId) await post(connectionId, { type: "ack", clientMsgId: result.clientMsgId, serverTs: now, clientTs });
+  if (result.answer) await reply({ type: "answer.ack", ack: result.answer, serverTs: now, clientTs });
+  else if (result.clientMsgId) await reply({ type: "ack", clientMsgId: result.clientMsgId, serverTs: now, clientTs });
+}
+
+async function fanOut(roomCode: string, state: RoomState, result: ApplyResult): Promise<void> {
+  const now = Date.now();
   if (result.kicked) {
     const conns = await listConnections(roomCode);
     await postMany(
@@ -334,6 +394,14 @@ async function deliver(roomCode: string, state: RoomState, result: ApplyResult, 
   }
   if (result.modeChanged) {
     await roomFanout(roomCode, { type: "mode", screenMode: state.screenMode, serverTs: now }, () => true);
+  }
+  try {
+    if (result.scheduleAt) await schedule(roomCode, state.battle.generation, result.scheduleAt);
+    if (result.dirty.some((k) => k === "board" || k === "cursors" || k === "standings" || k === "lobby" || k === "qa" || k === "admin" || k === "match" || k === "map")) {
+      await maybeFlush(roomCode);
+    }
+  } catch (err) {
+    console.error("post-success fanout failed", { roomCode, err });
   }
 }
 

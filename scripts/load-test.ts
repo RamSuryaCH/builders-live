@@ -414,6 +414,9 @@ async function body(clients: number, target: Target, sample: Sample): Promise<vo
       const i = start + offset;
       const bot = new Bot(target.wsUrl, `dev-${clients}-${i}`);
       bot.name = `Builder ${i + 1}`;
+      // Harness pacing, not a server fix: stagger each socket in the chunk by about
+      // 20 ms so 40 handshakes are not opened in one instant. Real failures are still counted.
+      await new Promise((r) => setTimeout(r, offset * 20 + Math.floor(random() * 20)));
       try {
         await bot.open();
       } catch {
