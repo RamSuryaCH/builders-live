@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Noncommercial-1.0.0
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { NodeHttpHandler } from "@smithy/node-http-handler";
 import {
   DeleteCommand,
   DynamoDBDocumentClient,
@@ -8,10 +9,18 @@ import {
   QueryCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
-import type { StoreBackend } from "./room-store.js";
+import type { StoreBackend, UpdateResult } from "./room-store.js";
 
 const table = () => process.env.TABLE_NAME ?? "";
-const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } });
+// Two attempts with a short per-request timeout keep one slow call inside the
+// command deadline. Retrying past that only adds latency for the player.
+const doc = DynamoDBDocumentClient.from(
+  new DynamoDBClient({
+    maxAttempts: 2,
+    requestHandler: new NodeHttpHandler({ requestTimeout: 1500 }),
+  }),
+  { marshallOptions: { removeUndefinedValues: true } },
+);
 
 function isConflict(err: unknown): boolean {
   return (err as { name?: string }).name === "ConditionalCheckFailedException";
@@ -51,9 +60,9 @@ export class DynamoBackend implements StoreBackend {
     values: Record<string, unknown>,
     names?: Record<string, string>,
     condition?: string,
-  ): Promise<"ok" | "conflict" | "missing"> {
+  ): Promise<UpdateResult> {
     try {
-      await doc.send(
+      const out = await doc.send(
         new UpdateCommand({
           TableName: table(),
           Key: { pk, sk },
@@ -61,13 +70,12 @@ export class DynamoBackend implements StoreBackend {
           ExpressionAttributeValues: values,
           ExpressionAttributeNames: names,
           ConditionExpression: condition,
+          ReturnValues: "ALL_NEW",
         }),
       );
-      return "ok";
+      return { status: "ok", attrs: (out.Attributes as Record<string, unknown> | undefined) ?? {} };
     } catch (err) {
-      if (isConflict(err)) return "conflict";
-      if ((err as { name?: string }).name === "ResourceNotFoundException") return "missing";
-      // Update with ADD creates the item; ConditionalCheckFailed is the main race signal.
+      if (isConflict(err)) return { status: "conflict", attrs: {} };
       throw err;
     }
   }

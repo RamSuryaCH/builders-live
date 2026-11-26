@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Noncommercial-1.0.0
-import type { StoreBackend } from "./room-store.js";
+import type { StoreBackend, UpdateResult } from "./room-store.js";
 
 type Row = Record<string, unknown>;
 
@@ -19,6 +19,38 @@ function evalCondition(item: Row | undefined, condition: string | undefined, val
     if (item[m[1]] !== values[m[2]]) return false;
   }
   return true;
+}
+
+function attrName(token: string, names: Record<string, string> = {}): string {
+  if (!token.startsWith("#")) return token;
+  const resolved = names[token];
+  if (!resolved) throw new Error(`missing attribute name for ${token}`);
+  return resolved;
+}
+
+/**
+ * Applies the ADD and SET clauses the room store uses to a copy of an item.
+ * ADD treats a missing attribute as 0 and creates it. Any other clause throws,
+ * so an unsupported update fails in tests instead of silently doing nothing.
+ */
+function applyUpdate(item: Row, expr: string, values: Row, names?: Record<string, string>): Row {
+  const next: Row = { ...item };
+  for (const part of expr.trim().split(/\s+(?=(?:ADD|SET)\s)/)) {
+    const kind = part.slice(0, 3);
+    const body = part.slice(3).trim();
+    if (kind !== "ADD" && kind !== "SET") throw new Error(`unsupported update clause: ${part}`);
+    for (const assignment of body.split(",")) {
+      if (kind === "ADD") {
+        const [attr, placeholder] = assignment.trim().split(/\s+/);
+        const key = attrName(attr, names);
+        next[key] = Number(next[key] ?? 0) + Number(values[placeholder]);
+      } else {
+        const [lhs, rhs] = assignment.split("=").map((s) => s.trim());
+        next[attrName(lhs, names)] = values[rhs];
+      }
+    }
+  }
+  return next;
 }
 
 export class MemoryBackend implements StoreBackend {
@@ -57,22 +89,13 @@ export class MemoryBackend implements StoreBackend {
     values: Record<string, unknown>,
     names?: Record<string, string>,
     condition?: string,
-  ): Promise<"ok" | "conflict" | "missing"> {
-    const current = this.bucket(pk).get(sk);
-    if (!current) {
-      if (update.includes("ADD score")) {
-        const next: Row = { pk, sk, score: Number(values[":p"] ?? 0), ttl: values[":ttl"] };
-        this.bucket(pk).set(sk, next);
-        return "ok";
-      }
-      return "missing";
-    }
-    if (condition && !evalCondition(current, condition, values)) return "conflict";
-    const next = { ...current };
-    if (update.includes("ADD score")) next.score = Number(next.score ?? 0) + Number(values[":p"] ?? 0);
-    if (names?.["#ttl"] && values[":ttl"] != null) next.ttl = values[":ttl"];
-    this.bucket(pk).set(sk, next);
-    return "ok";
+  ): Promise<UpdateResult> {
+    const bucket = this.bucket(pk);
+    const current = bucket.get(sk);
+    if (condition && !evalCondition(current, condition, values)) return { status: "conflict", attrs: {} };
+    const next = applyUpdate(current ?? { pk, sk }, update, values as Row, names);
+    bucket.set(sk, next);
+    return { status: "ok", attrs: { ...next } };
   }
 
   async query(pk: string, skPrefix: string): Promise<Row[]> {

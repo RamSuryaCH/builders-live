@@ -6,6 +6,7 @@
  * Players, answers, board nodes/edges, Q&A and counters are separate items so
  * concurrent joins and answers do not contend on one room version.
  */
+import { randomUUID } from "node:crypto";
 import { apply, createRoom, type ApplyResult, type Command, type EngineEnv } from "../shared/engine.js";
 import { assertCleanText, cleanName } from "../shared/profanity.js";
 import { pointsFor, pickTeam } from "../shared/scoring.js";
@@ -30,6 +31,12 @@ export interface ConnRow {
   views?: string[];
 }
 
+/** Outcome of StoreBackend.update. `attrs` is the item after the update (empty on conflict). */
+export interface UpdateResult {
+  status: "ok" | "conflict";
+  attrs: Record<string, unknown>;
+}
+
 export interface StoreBackend {
   get(pk: string, sk: string): Promise<Record<string, unknown> | null>;
   put(item: Record<string, unknown>, condition?: string, values?: Record<string, unknown>): Promise<"ok" | "conflict">;
@@ -40,14 +47,34 @@ export interface StoreBackend {
     values: Record<string, unknown>,
     names?: Record<string, string>,
     condition?: string,
-  ): Promise<"ok" | "conflict" | "missing">;
+  ): Promise<UpdateResult>;
   query(pk: string, skPrefix: string): Promise<Record<string, unknown>[]>;
   remove(pk: string, sk: string): Promise<void>;
   ttl(hours?: number): number;
 }
 
+/** Wall-clock budget for one applyCommand. Past it the caller gets a busy result. */
+export const COMMAND_DEADLINE_MS = 4000;
+/** Optimistic retry bound for META-versioned writes (host controls, match.set). */
+const MAX_ATTEMPTS = 3;
+
+type CounterField = "joined" | "nodes" | "edges";
+
 function roomPk(code: string): string {
   return `ROOM#${code}`;
+}
+
+function clientMsgIdOf(cmd: Command): string | undefined {
+  return "clientMsgId" in cmd ? cmd.clientMsgId : undefined;
+}
+
+function busyResult(cmd: Command): ApplyResult {
+  return {
+    ok: false,
+    error: { code: "busy", message: "The room is busy. Try again.", clientMsgId: clientMsgIdOf(cmd) },
+    phaseChanged: false,
+    dirty: [],
+  };
 }
 
 function freshBuckets() {
@@ -104,8 +131,17 @@ function playerItem(code: string, player: Player, ttl: number): Record<string, u
   return { pk: roomPk(code), sk: `PLAYER#${player.id}`, player: rest, ttl };
 }
 
+export interface RoomStoreOptions {
+  /** Override of COMMAND_DEADLINE_MS, used by tests. */
+  deadlineMs?: number;
+}
+
 export class RoomStore {
-  constructor(private backend: StoreBackend) {}
+  private deadlineMs: number;
+
+  constructor(private backend: StoreBackend, opts: RoomStoreOptions = {}) {
+    this.deadlineMs = opts.deadlineMs ?? COMMAND_DEADLINE_MS;
+  }
 
   async createRoom(state: RoomState, config?: EventConfig): Promise<void> {
     const ttl = this.backend.ttl();
@@ -123,26 +159,31 @@ export class RoomStore {
       joined: 0,
       nodes: 0,
       edges: 0,
-      teams,
       ttl,
     });
   }
 
-  async ensureCounters(code: string, config: EventConfig): Promise<void> {
-    const existing = await this.backend.get(roomPk(code), "COUNTERS");
-    if (existing) return;
-    const teams: Record<string, number> = {};
-    for (const team of config.teams) teams[team.id] = 0;
-    await this.backend.put({
-      pk: roomPk(code),
-      sk: "COUNTERS",
-      seq: 0,
-      joined: 0,
-      nodes: 0,
-      edges: 0,
-      teams,
-      ttl: this.backend.ttl(),
-    });
+  /**
+   * Unconditional ADD on one COUNTERS total. Returns false, after undoing the
+   * ADD, when the new total is over `max`. Concurrent callers each get a
+   * distinct new value, so exactly `max` reservations succeed.
+   */
+  private async reserve(code: string, field: CounterField, max: number): Promise<boolean> {
+    const out = await this.backend.update(
+      roomPk(code),
+      "COUNTERS",
+      "ADD #f :one SET #ttl = :ttl",
+      { ":one": 1, ":ttl": this.backend.ttl() },
+      { "#f": field, "#ttl": "ttl" },
+    );
+    if (Number(out.attrs[field] ?? 0) <= max) return true;
+    await this.release(code, field);
+    return false;
+  }
+
+  /** Gives back one slot taken by reserve(). */
+  private async release(code: string, field: CounterField): Promise<void> {
+    await this.backend.update(roomPk(code), "COUNTERS", "ADD #f :neg", { ":neg": -1 }, { "#f": field });
   }
 
   async loadRoom(code: string): Promise<RoomState | null> {
@@ -224,7 +265,25 @@ export class RoomStore {
     };
   }
 
+  /**
+   * Runs one command under the deadline. A write already in flight when the
+   * deadline passes still finishes, but the caller gets busy and no new retry
+   * starts.
+   */
   async applyCommand(code: string, cmd: Command, now: number, env: EngineEnv): Promise<ApplyResult> {
+    const deadline = Date.now() + this.deadlineMs;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<ApplyResult>((resolve) => {
+      timer = setTimeout(() => resolve(busyResult(cmd)), this.deadlineMs);
+    });
+    try {
+      return await Promise.race([this.dispatch(code, cmd, now, env, deadline), expired]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private dispatch(code: string, cmd: Command, now: number, env: EngineEnv, deadline: number): Promise<ApplyResult> {
     switch (cmd.type) {
       case "join":
         return this.join(code, cmd.name, cmd.deviceId, now, env);
@@ -246,17 +305,16 @@ export class RoomStore {
       case "qa.upvote":
         return this.qa(code, cmd, now, env);
       case "match.set":
-        return this.matchSet(code, cmd.playerId, cmd.interests, now, env);
+        return this.matchSet(code, cmd.playerId, cmd.interests, now, env, deadline);
       case "map.sit":
       case "map.leave":
-        return this.hostMutate(code, cmd, now, env);
+        return this.hostMutate(code, cmd, now, env, deadline);
       default:
-        return this.hostMutate(code, cmd, now, env);
+        return this.hostMutate(code, cmd, now, env, deadline);
     }
   }
 
   private async join(code: string, name: string, deviceId: string, now: number, env: EngineEnv): Promise<ApplyResult> {
-    await this.ensureCounters(code, env.config);
     const meta = await this.backend.get(roomPk(code), "META");
     if (!meta) return { ok: false, error: { code: "room_not_found", message: "No room with that code." }, phaseChanged: false, dirty: [] };
     const blocked = (meta.blockedDeviceIds as string[]) ?? [];
@@ -274,57 +332,29 @@ export class RoomStore {
     const cleaned = cleanName(name);
     if (!cleaned.ok) return { ok: false, error: { code: "bad_name", message: cleaned.message }, phaseChanged: false, dirty: [] };
 
-    for (let attempt = 0; attempt < 12; attempt += 1) {
-      const counters = await this.backend.get(roomPk(code), "COUNTERS");
-      if (!counters) {
-        await this.ensureCounters(code, env.config);
-        continue;
-      }
-      const joined = Number(counters.joined ?? 0);
-      if (joined >= env.config.roomCap) {
-        return { ok: false, error: { code: "full", message: "This room is full." }, phaseChanged: false, dirty: [] };
-      }
-      const teams = { ...((counters.teams as Record<string, number>) ?? {}) };
-      for (const team of env.config.teams) if (teams[team.id] == null) teams[team.id] = 0;
-      const teamId = pickTeam(new Map(Object.entries(teams).map(([k, v]) => [k, Number(v)])), env.config.teams.map((t) => t.id));
-      const nextSeq = Number(counters.seq ?? 0) + 1;
-      const playerId = `p${nextSeq.toString(36)}`;
+    // The cap slot is reserved first. An overflow undoes the ADD and writes nothing else.
+    if (!(await this.reserve(code, "joined", env.config.roomCap))) {
+      return { ok: false, error: { code: "full", message: "This room is full." }, phaseChanged: false, dirty: [] };
+    }
 
-      let display = cleaned.name;
-      for (let n = 0; n < 20; n += 1) {
+    const playerId = `p${randomUUID()}`;
+    let display: string | null = null;
+    let wrote = false;
+    try {
+      for (let n = 0; n < 20 && display === null; n += 1) {
         const candidate = n === 0 ? cleaned.name : `${cleaned.name} ${n + 1}`;
         const namePut = await this.backend.put(
           { pk: roomPk(code), sk: `NAME#${candidate.toLowerCase()}`, playerId, ttl: this.backend.ttl() },
           "attribute_not_exists(pk)",
         );
-        if (namePut === "ok") {
-          display = candidate;
-          break;
-        }
-        if (n === 19) return { ok: false, error: { code: "bad_name", message: "Pick a different display name." }, phaseChanged: false, dirty: [] };
+        if (namePut === "ok") display = candidate;
+      }
+      if (display === null) {
+        await this.release(code, "joined");
+        return { ok: false, error: { code: "bad_name", message: "Pick a different display name." }, phaseChanged: false, dirty: [] };
       }
 
-      const nextTeams = { ...teams, [teamId]: Number(teams[teamId] ?? 0) + 1 };
-      const counted = await this.backend.put(
-        {
-          pk: roomPk(code),
-          sk: "COUNTERS",
-          seq: nextSeq,
-          joined: joined + 1,
-          nodes: Number(counters.nodes ?? 0),
-          edges: Number(counters.edges ?? 0),
-          teams: nextTeams,
-          ttl: this.backend.ttl(),
-        },
-        "seq = :seq AND joined = :joined",
-        { ":seq": Number(counters.seq ?? 0), ":joined": joined },
-      );
-      if (counted === "conflict") {
-        await this.backend.remove(roomPk(code), `NAME#${display.toLowerCase()}`);
-        await sleep(jitter(attempt));
-        continue;
-      }
-
+      const teamId = await this.pickTeamId(code, env);
       const player: Player = {
         id: playerId,
         deviceId,
@@ -342,17 +372,32 @@ export class RoomStore {
         version: 1,
       };
       await this.backend.put(playerItem(code, player, this.backend.ttl()));
+      wrote = true;
+      await this.backend.update(
+        roomPk(code),
+        `TEAM#${teamId}`,
+        "ADD #members :one SET #ttl = :ttl",
+        { ":one": 1, ":ttl": this.backend.ttl() },
+        { "#members": "members", "#ttl": "ttl" },
+      );
       await this.backend.put({ pk: roomPk(code), sk: `DEVICE#${deviceId}`, playerId, ttl: this.backend.ttl() });
-      await this.backend.put({
-        pk: roomPk(code),
-        sk: `TEAM#${teamId}`,
-        members: nextTeams[teamId],
-        score: 0,
-        ttl: this.backend.ttl(),
-      });
       return { ok: true, joined: { playerId }, phaseChanged: false, dirty: ["lobby", "admin", "standings"] };
+    } catch (err) {
+      // Before the player item exists, give back the slot and the name so nothing phantom remains.
+      if (!wrote) {
+        await this.release(code, "joined");
+        if (display !== null) await this.backend.remove(roomPk(code), `NAME#${display.toLowerCase()}`);
+      }
+      throw err;
     }
-    return { ok: false, error: { code: "busy", message: "The room is busy. Try again." }, phaseChanged: false, dirty: [] };
+  }
+
+  /** Smallest team by TEAM# member count. Reads only team items, never COUNTERS. */
+  private async pickTeamId(code: string, env: EngineEnv): Promise<string> {
+    const rows = await this.backend.query(roomPk(code), "TEAM#");
+    const counts = new Map<string, number>();
+    for (const row of rows) counts.set(String(row.sk).slice("TEAM#".length), Number(row.members ?? 0));
+    return pickTeam(counts, env.config.teams.map((t) => t.id));
   }
 
   private async resume(code: string, playerId: string, deviceId: string, now: number): Promise<ApplyResult> {
@@ -554,39 +599,31 @@ export class RoomStore {
       if (!env.config.board.tiles.some((t) => t.id === cmd.tileType)) {
         return { ok: false, error: { code: "bad_tile", message: "Unknown service tile.", clientMsgId: cmd.clientMsgId }, phaseChanged: false, dirty: [] };
       }
-      for (let attempt = 0; attempt < 10; attempt += 1) {
-        const counters = await this.backend.get(roomPk(code), "COUNTERS");
-        if (!counters) return { ok: false, error: { code: "room_not_found", message: "No room with that code.", clientMsgId: cmd.clientMsgId }, phaseChanged: false, dirty: [] };
-        if (Number(counters.nodes ?? 0) >= env.config.board.maxNodes) {
-          return { ok: false, error: { code: "board_full", message: "The board is full.", clientMsgId: cmd.clientMsgId }, phaseChanged: false, dirty: [] };
-        }
-        const nextSeq = Number(counters.seq ?? 0) + 1;
-        const nodeId = `n${nextSeq.toString(36)}`;
-        const counted = await this.backend.put(
-          { ...counters, pk: roomPk(code), sk: "COUNTERS", seq: nextSeq, nodes: Number(counters.nodes ?? 0) + 1, ttl: this.backend.ttl() },
-          "seq = :seq AND nodes = :nodes",
-          { ":seq": Number(counters.seq ?? 0), ":nodes": Number(counters.nodes ?? 0) },
-        );
-        if (counted === "conflict") {
-          await sleep(jitter(attempt));
-          continue;
-        }
-        const node: BoardNode = {
-          id: nodeId,
-          tileType: cmd.tileType,
-          x: Math.min(100, Math.max(0, cmd.x)),
-          y: Math.min(100, Math.max(0, cmd.y)),
-          by: player.id,
-          byName: player.name,
-        };
-        await this.backend.put({ pk: roomPk(code), sk: `NODE#${nodeId}`, node, ttl: this.backend.ttl() });
-        player.lastSeen = now;
-        player.lastAction = now;
-        player.connected = true;
-        await this.backend.put(playerItem(code, player, this.backend.ttl()));
-        return { ok: true, clientMsgId: cmd.clientMsgId, phaseChanged: false, dirty: ["board", "admin"] };
+      if (!(await this.reserve(code, "nodes", env.config.board.maxNodes))) {
+        return { ok: false, error: { code: "board_full", message: "The board is full.", clientMsgId: cmd.clientMsgId }, phaseChanged: false, dirty: [] };
       }
-      return { ok: false, error: { code: "busy", message: "The board is busy. Try again.", clientMsgId: cmd.clientMsgId }, phaseChanged: false, dirty: [] };
+      const nodeId = `n${randomUUID()}`;
+      const node: BoardNode = {
+        id: nodeId,
+        tileType: cmd.tileType,
+        x: Math.min(100, Math.max(0, cmd.x)),
+        y: Math.min(100, Math.max(0, cmd.y)),
+        by: player.id,
+        byName: player.name,
+      };
+      let placed = false;
+      try {
+        placed = (await this.backend.put({ pk: roomPk(code), sk: `NODE#${nodeId}`, node, ttl: this.backend.ttl() }, "attribute_not_exists(pk)")) === "ok";
+      } finally {
+        // A failed write gives back the slot. A node that was written keeps it.
+        if (!placed) await this.release(code, "nodes");
+      }
+      if (!placed) return { ok: false, error: { code: "busy", message: "The board is busy. Try again.", clientMsgId: cmd.clientMsgId }, phaseChanged: false, dirty: [] };
+      player.lastSeen = now;
+      player.lastAction = now;
+      player.connected = true;
+      await this.backend.put(playerItem(code, player, this.backend.ttl()));
+      return { ok: true, clientMsgId: cmd.clientMsgId, phaseChanged: false, dirty: ["board", "admin"] };
     }
 
     if (cmd.type === "board.move") {
@@ -608,42 +645,36 @@ export class RoomStore {
       if (!a?.node || !b?.node) {
         return { ok: false, error: { code: "missing", message: "That tile is gone.", clientMsgId: cmd.clientMsgId }, phaseChanged: false, dirty: [] };
       }
+      if (!(await this.reserve(code, "edges", env.config.board.maxEdges))) {
+        return { ok: false, error: { code: "board_full", message: "The board is full.", clientMsgId: cmd.clientMsgId }, phaseChanged: false, dirty: [] };
+      }
       const edgeKey = [cmd.from, cmd.to].sort().join(":");
-      for (let attempt = 0; attempt < 10; attempt += 1) {
-        const counters = await this.backend.get(roomPk(code), "COUNTERS");
-        if (!counters) return { ok: false, error: { code: "room_not_found", message: "No room with that code.", clientMsgId: cmd.clientMsgId }, phaseChanged: false, dirty: [] };
-        if (Number(counters.edges ?? 0) >= env.config.board.maxEdges) {
-          return { ok: false, error: { code: "board_full", message: "The board is full.", clientMsgId: cmd.clientMsgId }, phaseChanged: false, dirty: [] };
-        }
-        const nextSeq = Number(counters.seq ?? 0) + 1;
-        const edgeId = `e${nextSeq.toString(36)}`;
-        const edgePut = await this.backend.put(
-          {
-            pk: roomPk(code),
-            sk: `EDGEKEY#${edgeKey}`,
-            edgeId,
-            ttl: this.backend.ttl(),
-          },
+      const edgeId = `e${randomUUID()}`;
+      let keyHeld = false;
+      let linked = false;
+      try {
+        // EDGEKEY keeps one edge per pair of tiles. The conditional put is the uniqueness check.
+        const keyPut = await this.backend.put(
+          { pk: roomPk(code), sk: `EDGEKEY#${edgeKey}`, edgeId, ttl: this.backend.ttl() },
           "attribute_not_exists(pk)",
         );
-        if (edgePut === "conflict") {
+        if (keyPut === "conflict") {
           return { ok: false, error: { code: "bad_edge", message: "Those tiles are already connected.", clientMsgId: cmd.clientMsgId }, phaseChanged: false, dirty: [] };
         }
-        const counted = await this.backend.put(
-          { ...counters, pk: roomPk(code), sk: "COUNTERS", seq: nextSeq, edges: Number(counters.edges ?? 0) + 1, ttl: this.backend.ttl() },
-          "seq = :seq AND edges = :edges",
-          { ":seq": Number(counters.seq ?? 0), ":edges": Number(counters.edges ?? 0) },
-        );
-        if (counted === "conflict") {
-          await this.backend.remove(roomPk(code), `EDGEKEY#${edgeKey}`);
-          await sleep(jitter(attempt));
-          continue;
-        }
+        keyHeld = true;
         const edge: BoardEdge = { id: edgeId, from: cmd.from, to: cmd.to, by: player.id };
-        await this.backend.put({ pk: roomPk(code), sk: `EDGE#${edgeId}`, edge, ttl: this.backend.ttl() });
+        const edgePut = await this.backend.put({ pk: roomPk(code), sk: `EDGE#${edgeId}`, edge, ttl: this.backend.ttl() }, "attribute_not_exists(pk)");
+        if (edgePut === "conflict") {
+          return { ok: false, error: { code: "busy", message: "The board is busy. Try again.", clientMsgId: cmd.clientMsgId }, phaseChanged: false, dirty: [] };
+        }
+        linked = true;
         return { ok: true, clientMsgId: cmd.clientMsgId, phaseChanged: false, dirty: ["board", "admin"] };
+      } finally {
+        if (!linked) {
+          if (keyHeld) await this.backend.remove(roomPk(code), `EDGEKEY#${edgeKey}`);
+          await this.release(code, "edges");
+        }
       }
-      return { ok: false, error: { code: "busy", message: "The board is busy. Try again.", clientMsgId: cmd.clientMsgId }, phaseChanged: false, dirty: [] };
     }
 
     // delete
@@ -680,39 +711,28 @@ export class RoomStore {
       if (!take(player.buckets.qa, now, env.config.qa.rateLimitPerMin, 60_000)) {
         return { ok: false, error: { code: "slow", message: "Give it a minute before the next question.", clientMsgId: cmd.clientMsgId }, phaseChanged: false, dirty: [] };
       }
-      for (let attempt = 0; attempt < 8; attempt += 1) {
-        const counters = await this.backend.get(roomPk(code), "COUNTERS");
-        if (!counters) return { ok: false, error: { code: "room_not_found", message: "No room with that code.", clientMsgId: cmd.clientMsgId }, phaseChanged: false, dirty: [] };
-        const nextSeq = Number(counters.seq ?? 0) + 1;
-        const id = `q${nextSeq.toString(36)}`;
-        const counted = await this.backend.put(
-          { ...counters, pk: roomPk(code), sk: "COUNTERS", seq: nextSeq, ttl: this.backend.ttl() },
-          "seq = :seq",
-          { ":seq": Number(counters.seq ?? 0) },
-        );
-        if (counted === "conflict") {
-          await sleep(jitter(attempt));
-          continue;
-        }
-        const qa: QaItem = {
-          id,
-          text: cleaned.text,
-          by: player.id,
-          byName: player.name,
-          upvotes: 0,
-          voters: [],
-          answered: false,
-          hidden: false,
-          createdAt: now,
-        };
-        await this.backend.put({ pk: roomPk(code), sk: `QA#${id}`, qa, ttl: this.backend.ttl() });
-        player.lastSeen = now;
-        player.lastAction = now;
-        await this.backend.put(playerItem(code, player, this.backend.ttl()));
-        return { ok: true, clientMsgId: cmd.clientMsgId, phaseChanged: false, dirty: ["qa", "admin"] };
+      const id = `q${randomUUID()}`;
+      const qa: QaItem = {
+        id,
+        text: cleaned.text,
+        by: player.id,
+        byName: player.name,
+        upvotes: 0,
+        voters: [],
+        answered: false,
+        hidden: false,
+        createdAt: now,
+      };
+      const put = await this.backend.put({ pk: roomPk(code), sk: `QA#${id}`, qa, ttl: this.backend.ttl() }, "attribute_not_exists(pk)");
+      if (put === "conflict") {
+        return { ok: false, error: { code: "busy", message: "Try again.", clientMsgId: cmd.clientMsgId }, phaseChanged: false, dirty: [] };
       }
-      return { ok: false, error: { code: "busy", message: "Try again.", clientMsgId: cmd.clientMsgId }, phaseChanged: false, dirty: [] };
+      player.lastSeen = now;
+      player.lastAction = now;
+      await this.backend.put(playerItem(code, player, this.backend.ttl()));
+      return { ok: true, clientMsgId: cmd.clientMsgId, phaseChanged: false, dirty: ["qa", "admin"] };
     }
+
     if (!take(player.buckets.vote, now, 8, 1000)) {
       return { ok: false, error: { code: "slow", message: "Slow down a little." }, phaseChanged: false, dirty: [] };
     }
@@ -730,7 +750,7 @@ export class RoomStore {
     return { ok: true, phaseChanged: false, dirty: ["qa", "admin"] };
   }
 
-  private async matchSet(code: string, playerId: string, interests: string[], now: number, env: EngineEnv): Promise<ApplyResult> {
+  private async matchSet(code: string, playerId: string, interests: string[], now: number, env: EngineEnv, deadline: number): Promise<ApplyResult> {
     const playerRow = await this.backend.get(roomPk(code), `PLAYER#${playerId}`);
     const player = playerRow?.player as Player | undefined;
     if (!player || player.kicked) {
@@ -742,7 +762,7 @@ export class RoomStore {
     player.lastSeen = now;
     player.lastAction = now;
     await this.backend.put(playerItem(code, player, this.backend.ttl()));
-    for (let attempt = 0; attempt < 12; attempt += 1) {
+    for (let attempt = 0; attempt < MAX_ATTEMPTS && Date.now() < deadline; attempt += 1) {
       const room = await this.loadRoom(code);
       if (!room) return { ok: false, error: { code: "room_not_found", message: "No room with that code." }, phaseChanged: false, dirty: [] };
       room.interests[playerId] = cleaned;
@@ -762,8 +782,8 @@ export class RoomStore {
     return { ok: false, error: { code: "busy", message: "Matching is busy. Try again." }, phaseChanged: false, dirty: [] };
   }
 
-  async hostMutate(code: string, cmd: Command, now: number, env: EngineEnv): Promise<ApplyResult> {
-    for (let attempt = 0; attempt < 16; attempt += 1) {
+  async hostMutate(code: string, cmd: Command, now: number, env: EngineEnv, deadline = Number.POSITIVE_INFINITY): Promise<ApplyResult> {
+    for (let attempt = 0; attempt < MAX_ATTEMPTS && Date.now() < deadline; attempt += 1) {
       const current = await this.loadRoom(code);
       if (!current) return { ok: false, error: { code: "room_not_found", message: "Open a room first." }, phaseChanged: false, dirty: [] };
       const working = structuredClone(current);
@@ -821,9 +841,6 @@ export class RoomStore {
         joined: Object.values(next.players).filter((p) => !p.kicked).length,
         nodes: 0,
         edges: 0,
-        teams: Object.fromEntries(
-          env.config.teams.map((team) => [team.id, Object.values(next.players).filter((p) => !p.kicked && p.teamId === team.id).length]),
-        ),
         ttl: this.backend.ttl(),
       });
       for (const player of Object.values(next.players)) {
@@ -878,10 +895,13 @@ export class RoomStore {
       await this.wipePrefix(next.code, "EDGE");
       await this.wipePrefix(next.code, "EDGEKEY");
       await this.wipePrefix(next.code, "CURSOR");
-      const counters = await this.backend.get(roomPk(next.code), "COUNTERS");
-      if (counters) {
-        await this.backend.put({ ...counters, pk: roomPk(next.code), sk: "COUNTERS", nodes: 0, edges: 0, ttl: this.backend.ttl() });
-      }
+      await this.backend.update(
+        roomPk(next.code),
+        "COUNTERS",
+        "SET #nodes = :zero, #edges = :zero, #ttl = :ttl",
+        { ":zero": 0, ":ttl": this.backend.ttl() },
+        { "#nodes": "nodes", "#edges": "edges", "#ttl": "ttl" },
+      );
     }
 
     if (cmd.type === "host.kick") {

@@ -129,6 +129,7 @@ Resources:
     Properties:
       FunctionName: !Sub ${AWS::StackName}-ws
       CodeUri: ../dist-lambda/ws/
+      Timeout: 20
       Tags:
         project: builders-live
       Handler: handler.handler
